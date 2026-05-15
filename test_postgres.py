@@ -4,7 +4,7 @@ import os
 import sys
 
 # .streamlit/secrets.toml에서 환경변수 로드
-os.environ["DATABASE_URL"] = "postgresql://postgres:Fkdhszlwm85@db.rmqfbwpsmypsbeiefjuk.supabase.co:5432/postgres"
+os.environ["DATABASE_URL"] = "postgresql://neondb_owner:npg_hRtagdHUZ86T@ep-icy-math-aoh3lmjy.c-2.ap-southeast-1.aws.neon.tech/neondb?sslmode=require"
 
 try:
     from modules.db import get_conn, init_db, USE_POSTGRES
