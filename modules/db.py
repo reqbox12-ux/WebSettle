@@ -1,8 +1,15 @@
 import sqlite3
 import pandas as pd
 from pathlib import Path
+import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 DB_PATH = Path(__file__).parent.parent / "data" / "settlement.db"
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+# PostgreSQL 또는 SQLite 결정
+USE_POSTGRES = DATABASE_URL is not None
 
 # 대시보드 기준 계정과목 체계
 REVENUE_CATEGORIES = {
@@ -20,87 +27,167 @@ EXPENSE_CATEGORIES = [
 
 
 def get_conn():
-    DB_PATH.parent.mkdir(exist_ok=True)
-    return sqlite3.connect(DB_PATH)
+    if USE_POSTGRES:
+        try:
+            conn = psycopg2.connect(DATABASE_URL)
+            return conn
+        except Exception as e:
+            print(f"PostgreSQL 연결 실패: {e}")
+            return None
+    else:
+        DB_PATH.parent.mkdir(exist_ok=True)
+        return sqlite3.connect(DB_PATH)
 
 
 def init_db():
     conn = get_conn()
+    if not conn:
+        return
+
     c = conn.cursor()
-    c.executescript("""
-        CREATE TABLE IF NOT EXISTS card_sales (
-            id             INTEGER PRIMARY KEY AUTOINCREMENT,
-            year           INTEGER,
-            month          INTEGER,
-            source         TEXT,
-            branch         TEXT,
-            raw_merchant   TEXT,
-            card_company   TEXT,
-            total_amount   INTEGER DEFAULT 0,
-            vat            INTEGER DEFAULT 0,
-            supply_amount  INTEGER DEFAULT 0,
-            fee            INTEGER DEFAULT 0,
-            net_amount     INTEGER DEFAULT 0,
-            sale_date      TEXT
-        );
 
-        CREATE TABLE IF NOT EXISTS bank_transactions (
-            id           INTEGER PRIMARY KEY AUTOINCREMENT,
-            year         INTEGER,
-            month        INTEGER,
-            bank         TEXT,
-            tx_date      TEXT,
-            description  TEXT,
-            counterpart  TEXT,
-            deposit      INTEGER DEFAULT 0,
-            withdrawal   INTEGER DEFAULT 0,
-            balance      INTEGER DEFAULT 0,
-            branch       TEXT,
-            content      TEXT,
-            category     TEXT,
-            vat          INTEGER DEFAULT 0,
-            is_excluded  INTEGER DEFAULT 0,
-            needs_review INTEGER DEFAULT 0
-        );
+    if USE_POSTGRES:
+        # PostgreSQL 테이블 생성
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS card_sales (
+                id             SERIAL PRIMARY KEY,
+                year           INTEGER,
+                month          INTEGER,
+                source         TEXT,
+                branch         TEXT,
+                raw_merchant   TEXT,
+                card_company   TEXT,
+                total_amount   INTEGER DEFAULT 0,
+                vat            INTEGER DEFAULT 0,
+                supply_amount  INTEGER DEFAULT 0,
+                fee            INTEGER DEFAULT 0,
+                net_amount     INTEGER DEFAULT 0,
+                sale_date      TEXT
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS bank_transactions (
+                id           SERIAL PRIMARY KEY,
+                year         INTEGER,
+                month        INTEGER,
+                bank         TEXT,
+                tx_date      TEXT,
+                description  TEXT,
+                counterpart  TEXT,
+                deposit      INTEGER DEFAULT 0,
+                withdrawal   INTEGER DEFAULT 0,
+                balance      INTEGER DEFAULT 0,
+                branch       TEXT,
+                content      TEXT,
+                category     TEXT,
+                vat          INTEGER DEFAULT 0,
+                is_excluded  INTEGER DEFAULT 0,
+                needs_review INTEGER DEFAULT 0
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS payroll (
+                id              SERIAL PRIMARY KEY,
+                year            INTEGER,
+                month           INTEGER,
+                branch          TEXT,
+                type            TEXT,
+                gross_pay       INTEGER DEFAULT 0,
+                net_pay         INTEGER DEFAULT 0,
+                insurance       INTEGER DEFAULT 0,
+                income_tax      INTEGER DEFAULT 0,
+                local_tax       INTEGER DEFAULT 0,
+                headcount       INTEGER DEFAULT 0
+            )
+        """)
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS keyword_rules (
+                id         SERIAL PRIMARY KEY,
+                bank       TEXT,
+                keyword    TEXT,
+                branch     TEXT,
+                category   TEXT,
+                hit_count  INTEGER DEFAULT 0,
+                UNIQUE(bank, keyword, branch, category)
+            )
+        """)
+    else:
+        # SQLite 테이블 생성
+        c.executescript("""
+            CREATE TABLE IF NOT EXISTS card_sales (
+                id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                year           INTEGER,
+                month          INTEGER,
+                source         TEXT,
+                branch         TEXT,
+                raw_merchant   TEXT,
+                card_company   TEXT,
+                total_amount   INTEGER DEFAULT 0,
+                vat            INTEGER DEFAULT 0,
+                supply_amount  INTEGER DEFAULT 0,
+                fee            INTEGER DEFAULT 0,
+                net_amount     INTEGER DEFAULT 0,
+                sale_date      TEXT
+            );
 
-        CREATE TABLE IF NOT EXISTS payroll (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            year            INTEGER,
-            month           INTEGER,
-            branch          TEXT,
-            type            TEXT,   -- 'insured' | 'freelance'
-            gross_pay       INTEGER DEFAULT 0,
-            net_pay         INTEGER DEFAULT 0,
-            insurance       INTEGER DEFAULT 0,
-            income_tax      INTEGER DEFAULT 0,
-            local_tax       INTEGER DEFAULT 0,
-            headcount       INTEGER DEFAULT 0
-        );
+            CREATE TABLE IF NOT EXISTS bank_transactions (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                year         INTEGER,
+                month        INTEGER,
+                bank         TEXT,
+                tx_date      TEXT,
+                description  TEXT,
+                counterpart  TEXT,
+                deposit      INTEGER DEFAULT 0,
+                withdrawal   INTEGER DEFAULT 0,
+                balance      INTEGER DEFAULT 0,
+                branch       TEXT,
+                content      TEXT,
+                category     TEXT,
+                vat          INTEGER DEFAULT 0,
+                is_excluded  INTEGER DEFAULT 0,
+                needs_review INTEGER DEFAULT 0
+            );
 
-        CREATE TABLE IF NOT EXISTS keyword_rules (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            bank       TEXT,
-            keyword    TEXT,
-            branch     TEXT,
-            category   TEXT,
-            hit_count  INTEGER DEFAULT 0,
-            UNIQUE(bank, keyword, branch, category)
-        );
-    """)
-    # 기존 테이블이 있으면 vat 컬럼 추가 (마이그레이션)
-    for col_def in [
-        ("bank_transactions", "vat", "INTEGER DEFAULT 0"),
-        ("card_sales", "source", "TEXT"),
-        ("card_sales", "total_amount", "INTEGER DEFAULT 0"),
-        ("card_sales", "vat", "INTEGER DEFAULT 0"),
-        ("card_sales", "supply_amount", "INTEGER DEFAULT 0"),
-        ("card_sales", "fee", "INTEGER DEFAULT 0"),
-        ("card_sales", "net_amount", "INTEGER DEFAULT 0"),
-    ]:
-        try:
-            c.execute(f"ALTER TABLE {col_def[0]} ADD COLUMN {col_def[1]} {col_def[2]}")
-        except Exception:
-            pass
+            CREATE TABLE IF NOT EXISTS payroll (
+                id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                year            INTEGER,
+                month           INTEGER,
+                branch          TEXT,
+                type            TEXT,
+                gross_pay       INTEGER DEFAULT 0,
+                net_pay         INTEGER DEFAULT 0,
+                insurance       INTEGER DEFAULT 0,
+                income_tax      INTEGER DEFAULT 0,
+                local_tax       INTEGER DEFAULT 0,
+                headcount       INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS keyword_rules (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                bank       TEXT,
+                keyword    TEXT,
+                branch     TEXT,
+                category   TEXT,
+                hit_count  INTEGER DEFAULT 0,
+                UNIQUE(bank, keyword, branch, category)
+            );
+        """)
+        # SQLite 마이그레이션
+        for col_def in [
+            ("bank_transactions", "vat", "INTEGER DEFAULT 0"),
+            ("card_sales", "source", "TEXT"),
+            ("card_sales", "total_amount", "INTEGER DEFAULT 0"),
+            ("card_sales", "vat", "INTEGER DEFAULT 0"),
+            ("card_sales", "supply_amount", "INTEGER DEFAULT 0"),
+            ("card_sales", "fee", "INTEGER DEFAULT 0"),
+            ("card_sales", "net_amount", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                c.execute(f"ALTER TABLE {col_def[0]} ADD COLUMN {col_def[1]} {col_def[2]}")
+            except Exception:
+                pass
+
     conn.commit()
     conn.close()
 
