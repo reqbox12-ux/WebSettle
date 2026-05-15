@@ -65,11 +65,24 @@ month_sel = st.sidebar.selectbox(
 
 # ── 공통: 지점별 손익 계산 ────────────────────────────────
 
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_card(year, month): return get_card_by_branch(year, month)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_cash(year, month): return get_branch_cash_revenue(year, month)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_pay(year, month): return get_payroll_summary(year, month)
+
+@st.cache_data(ttl=300, show_spinner=False)
+def cached_exp(year, month): return get_expense_by_category(year, month)
+
+
 def build_summary(year: int, month: int | None) -> pd.DataFrame:
-    card_df   = get_card_by_branch(year, month)
-    cash_df   = get_branch_cash_revenue(year, month)
-    pay_df    = get_payroll_summary(year, month)
-    exp_df    = get_expense_by_category(year, month)
+    card_df   = cached_card(year, month)
+    cash_df   = cached_cash(year, month)
+    pay_df    = cached_pay(year, month)
+    exp_df    = cached_exp(year, month)
 
     # 카드 수입
     card_net    = card_df.set_index("branch")["card_net"]    if not card_df.empty else pd.Series(dtype=float)
