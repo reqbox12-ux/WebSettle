@@ -1,0 +1,49 @@
+# Git
+.git
+.gitignore
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyc
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Streamlit secrets (보안)
+.streamlit/secrets.toml
+
+# Data files (볼륨으로 마운트됨)
+data/*.db
+
+# Excel source files (불필요)
+*.xlsx
+*.xls
+
+# Backups
+backups/
+
+# Temp files
+*.log
+output_temp.txt
+
+# Analysis scripts (불필요)
+analyze*.py
+read_excel*.py
+test_*.py
+check_*.py
+fix_*.py
+migrate_to_neon.py
+gen_rules.py
+reload_all.py
+load_all.py
