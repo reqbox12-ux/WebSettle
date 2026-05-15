@@ -4,12 +4,19 @@ from pathlib import Path
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from sqlalchemy import create_engine, text
 
 DB_PATH = Path(__file__).parent.parent / "data" / "settlement.db"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # PostgreSQL 또는 SQLite 결정
 USE_POSTGRES = DATABASE_URL is not None
+
+# SQLAlchemy 엔진 (pandas read_sql용)
+if USE_POSTGRES:
+    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
+else:
+    engine = None
 
 # 대시보드 기준 계정과목 체계
 REVENUE_CATEGORIES = {
@@ -274,17 +281,12 @@ def upsert_card_sales(df: pd.DataFrame, source: str, year: int, month: int):
 
 
 def get_card_by_branch(year: int, month: int = None):
-    conn = get_conn()
-    mf = "AND month=%s" if month and USE_POSTGRES else "AND month=?" if month else ""
-    params = {"year": year} if USE_POSTGRES else [year]
-
-    if month:
-        if USE_POSTGRES:
-            params["month"] = month
-        else:
-            params.append(month)
-
     if USE_POSTGRES:
+        mf = "AND month=:month" if month else ""
+        params = {"year": year}
+        if month:
+            params["month"] = month
+
         query = f"""
             SELECT branch,
                    SUM(total_amount)  as card_total,
@@ -293,11 +295,18 @@ def get_card_by_branch(year: int, month: int = None):
                    SUM(fee)           as card_fee,
                    SUM(net_amount)    as card_net
             FROM card_sales
-            WHERE year=%(year)s {mf}
+            WHERE year=:year {mf}
             GROUP BY branch
         """
-        df = pd.read_sql(query, conn, params=params)
+        df = pd.read_sql(text(query), engine, params=params)
+        return df
     else:
+        conn = get_conn()
+        mf = "AND month=?" if month else ""
+        params = [year]
+        if month:
+            params.append(month)
+
         query = f"""
             SELECT branch,
                    SUM(total_amount)  as card_total,
@@ -310,9 +319,8 @@ def get_card_by_branch(year: int, month: int = None):
             GROUP BY branch
         """
         df = pd.read_sql(query, conn, params=params)
-
-    conn.close()
-    return df
+        conn.close()
+        return df
 
 
 # ── 통장 거래 ─────────────────────────────────────────────
@@ -337,36 +345,38 @@ def upsert_bank_transactions(df: pd.DataFrame, bank: str, year: int, month: int)
 
 def get_branch_cash_revenue(year: int, month: int = None):
     """통장 현금 매출: 공급가액(deposit - vat)과 VAT 반환"""
-    conn = get_conn()
-    mf = "AND month=%s" if month and USE_POSTGRES else "AND month=?" if month else ""
-    params = {"year": year} if USE_POSTGRES else [year]
-
-    if month:
-        if USE_POSTGRES:
-            params["month"] = month
-        else:
-            params.append(month)
-
     revenue_cats = (
         "'기타매출(현금)','PT매출(현금)','GX매출(현금)',"
         "'골프매출(현금)','키즈매출(현금)','도급비','시설상환비','카페매출'"
     )
 
     if USE_POSTGRES:
+        mf = "AND month=:month" if month else ""
+        params = {"year": year}
+        if month:
+            params["month"] = month
+
         query = f"""
             SELECT branch,
                    SUM(deposit - vat) as cash_supply,
                    SUM(vat)           as cash_vat,
                    SUM(deposit)       as cash_total
             FROM bank_transactions
-            WHERE year=%(year)s {mf}
+            WHERE year=:year {mf}
               AND is_excluded=0
               AND category IN ({revenue_cats})
               AND deposit > 0
             GROUP BY branch
         """
-        df = pd.read_sql(query, conn, params=params)
+        df = pd.read_sql(text(query), engine, params=params)
+        return df
     else:
+        conn = get_conn()
+        mf = "AND month=?" if month else ""
+        params = [year]
+        if month:
+            params.append(month)
+
         query = f"""
             SELECT branch,
                    SUM(deposit - vat) as cash_supply,
@@ -380,22 +390,19 @@ def get_branch_cash_revenue(year: int, month: int = None):
             GROUP BY branch
         """
         df = pd.read_sql(query, conn, params=params)
-
-    conn.close()
-    return df
+        conn.close()
+        return df
 
 
 def get_expense_by_category(year: int, month: int = None, branch: str = None):
-    conn = get_conn()
-
     if USE_POSTGRES:
-        filters = ["year=%(year)s", "is_excluded=0", "withdrawal > 0"]
+        filters = ["year=:year", "is_excluded=0", "withdrawal > 0"]
         params = {"year": year}
         if month:
-            filters.append("month=%(month)s")
+            filters.append("month=:month")
             params["month"] = month
         if branch:
-            filters.append("branch=%(branch)s")
+            filters.append("branch=:branch")
             params["branch"] = branch
         where = " AND ".join(filters)
         query = f"""
@@ -404,8 +411,10 @@ def get_expense_by_category(year: int, month: int = None, branch: str = None):
             WHERE {where}
             GROUP BY branch, month, category
         """
-        df = pd.read_sql(query, conn, params=params)
+        df = pd.read_sql(text(query), engine, params=params)
+        return df
     else:
+        conn = get_conn()
         filters = ["year=?", "is_excluded=0", "withdrawal > 0"]
         params = [year]
         if month:
@@ -422,9 +431,8 @@ def get_expense_by_category(year: int, month: int = None, branch: str = None):
             GROUP BY branch, month, category
         """
         df = pd.read_sql(query, conn, params=params)
-
-    conn.close()
-    return df
+        conn.close()
+        return df
 
 
 def get_unreviewed_transactions():
@@ -483,16 +491,14 @@ def upsert_payroll(df: pd.DataFrame, year: int, month: int, pay_type: str):
 
 
 def get_payroll_summary(year: int, month: int = None, branch: str = None):
-    conn = get_conn()
-
     if USE_POSTGRES:
-        filters = ["year=%(year)s"]
+        filters = ["year=:year"]
         params = {"year": year}
         if month:
-            filters.append("month=%(month)s")
+            filters.append("month=:month")
             params["month"] = month
         if branch:
-            filters.append("branch=%(branch)s")
+            filters.append("branch=:branch")
             params["branch"] = branch
         where = " AND ".join(filters)
         query = f"""
@@ -507,8 +513,10 @@ def get_payroll_summary(year: int, month: int = None, branch: str = None):
             WHERE {where}
             GROUP BY branch, month, type
         """
-        df = pd.read_sql(query, conn, params=params)
+        df = pd.read_sql(text(query), engine, params=params)
+        return df
     else:
+        conn = get_conn()
         filters = ["year=?"]
         params = [year]
         if month:
@@ -531,27 +539,28 @@ def get_payroll_summary(year: int, month: int = None, branch: str = None):
             GROUP BY branch, month, type
         """
         df = pd.read_sql(query, conn, params=params)
-
-    conn.close()
-    return df
+        conn.close()
+        return df
 
 
 def get_keyword_rules(bank: str = None):
-    conn = get_conn()
-    if bank:
-        if USE_POSTGRES:
-            df = pd.read_sql(
-                "SELECT * FROM keyword_rules WHERE bank=%s ORDER BY hit_count DESC",
-                conn, params=(bank,)
-            )
+    if USE_POSTGRES:
+        if bank:
+            query = text("SELECT * FROM keyword_rules WHERE bank=:bank ORDER BY hit_count DESC")
+            df = pd.read_sql(query, engine, params={"bank": bank})
         else:
+            df = pd.read_sql(text("SELECT * FROM keyword_rules ORDER BY bank, hit_count DESC"), engine)
+        return df
+    else:
+        conn = get_conn()
+        if bank:
             df = pd.read_sql(
                 "SELECT * FROM keyword_rules WHERE bank=? ORDER BY hit_count DESC",
                 conn, params=(bank,)
             )
-    else:
-        df = pd.read_sql(
-            "SELECT * FROM keyword_rules ORDER BY bank, hit_count DESC", conn
-        )
-    conn.close()
-    return df
+        else:
+            df = pd.read_sql(
+                "SELECT * FROM keyword_rules ORDER BY bank, hit_count DESC", conn
+            )
+        conn.close()
+        return df
