@@ -48,69 +48,74 @@ def init_db():
 
     if USE_POSTGRES:
         # PostgreSQL 테이블 생성
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS card_sales (
-                id             SERIAL PRIMARY KEY,
-                year           INTEGER,
-                month          INTEGER,
-                source         TEXT,
-                branch         TEXT,
-                raw_merchant   TEXT,
-                card_company   TEXT,
-                total_amount   INTEGER DEFAULT 0,
-                vat            INTEGER DEFAULT 0,
-                supply_amount  INTEGER DEFAULT 0,
-                fee            INTEGER DEFAULT 0,
-                net_amount     INTEGER DEFAULT 0,
-                sale_date      TEXT
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS bank_transactions (
-                id           SERIAL PRIMARY KEY,
-                year         INTEGER,
-                month        INTEGER,
-                bank         TEXT,
-                tx_date      TEXT,
-                description  TEXT,
-                counterpart  TEXT,
-                deposit      INTEGER DEFAULT 0,
-                withdrawal   INTEGER DEFAULT 0,
-                balance      INTEGER DEFAULT 0,
-                branch       TEXT,
-                content      TEXT,
-                category     TEXT,
-                vat          INTEGER DEFAULT 0,
-                is_excluded  INTEGER DEFAULT 0,
-                needs_review INTEGER DEFAULT 0
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS payroll (
-                id              SERIAL PRIMARY KEY,
-                year            INTEGER,
-                month           INTEGER,
-                branch          TEXT,
-                type            TEXT,
-                gross_pay       INTEGER DEFAULT 0,
-                net_pay         INTEGER DEFAULT 0,
-                insurance       INTEGER DEFAULT 0,
-                income_tax      INTEGER DEFAULT 0,
-                local_tax       INTEGER DEFAULT 0,
-                headcount       INTEGER DEFAULT 0
-            )
-        """)
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS keyword_rules (
-                id         SERIAL PRIMARY KEY,
-                bank       TEXT,
-                keyword    TEXT,
-                branch     TEXT,
-                category   TEXT,
-                hit_count  INTEGER DEFAULT 0,
-                UNIQUE(bank, keyword, branch, category)
-            )
-        """)
+        try:
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS card_sales (
+                    id             SERIAL PRIMARY KEY,
+                    year           INTEGER,
+                    month          INTEGER,
+                    source         TEXT,
+                    branch         TEXT,
+                    raw_merchant   TEXT,
+                    card_company   TEXT,
+                    total_amount   INTEGER DEFAULT 0,
+                    vat            INTEGER DEFAULT 0,
+                    supply_amount  INTEGER DEFAULT 0,
+                    fee            INTEGER DEFAULT 0,
+                    net_amount     INTEGER DEFAULT 0,
+                    sale_date      TEXT
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS bank_transactions (
+                    id           SERIAL PRIMARY KEY,
+                    year         INTEGER,
+                    month        INTEGER,
+                    bank         TEXT,
+                    tx_date      TEXT,
+                    description  TEXT,
+                    counterpart  TEXT,
+                    deposit      INTEGER DEFAULT 0,
+                    withdrawal   INTEGER DEFAULT 0,
+                    balance      INTEGER DEFAULT 0,
+                    branch       TEXT,
+                    content      TEXT,
+                    category     TEXT,
+                    vat          INTEGER DEFAULT 0,
+                    is_excluded  INTEGER DEFAULT 0,
+                    needs_review INTEGER DEFAULT 0
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS payroll (
+                    id              SERIAL PRIMARY KEY,
+                    year            INTEGER,
+                    month           INTEGER,
+                    branch          TEXT,
+                    type            TEXT,
+                    gross_pay       INTEGER DEFAULT 0,
+                    net_pay         INTEGER DEFAULT 0,
+                    insurance       INTEGER DEFAULT 0,
+                    income_tax      INTEGER DEFAULT 0,
+                    local_tax       INTEGER DEFAULT 0,
+                    headcount       INTEGER DEFAULT 0
+                )
+            """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS keyword_rules (
+                    id         SERIAL PRIMARY KEY,
+                    bank       TEXT,
+                    keyword    TEXT,
+                    branch     TEXT,
+                    category   TEXT,
+                    hit_count  INTEGER DEFAULT 0,
+                    UNIQUE(bank, keyword, branch, category)
+                )
+            """)
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            print(f"PostgreSQL 테이블 생성 오류: {e}")
     else:
         # SQLite 테이블 생성
         c.executescript("""
@@ -187,8 +192,8 @@ def init_db():
                 c.execute(f"ALTER TABLE {col_def[0]} ADD COLUMN {col_def[1]} {col_def[2]}")
             except Exception:
                 pass
+        conn.commit()
 
-    conn.commit()
     conn.close()
 
 
@@ -197,20 +202,39 @@ def load_keyword_rules():
     rules_path = Path(__file__).parent.parent / "mapping" / "keyword_rules.json"
     if not rules_path.exists():
         return
-    with open(rules_path, encoding="utf-8") as f:
-        data = json.load(f)
-    conn = get_conn()
-    c = conn.cursor()
-    for bank, key in [("hana", "hana"), ("shinhan", "shinhan")]:
-        for rule in data.get(key, []):
-            # 계정과목 정규화
-            cat = _normalize_category(rule["category"])
-            c.execute("""
-                INSERT OR IGNORE INTO keyword_rules (bank, keyword, branch, category, hit_count)
-                VALUES (?, ?, ?, ?, ?)
-            """, (bank, rule["keyword"], rule["branch"], cat, rule.get("count", 0)))
-    conn.commit()
-    conn.close()
+
+    try:
+        with open(rules_path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        conn = get_conn()
+        if not conn:
+            return
+
+        c = conn.cursor()
+
+        for bank, key in [("hana", "hana"), ("shinhan", "shinhan")]:
+            for rule in data.get(key, []):
+                cat = _normalize_category(rule["category"])
+
+                if USE_POSTGRES:
+                    # PostgreSQL: ON CONFLICT 문법 사용
+                    c.execute("""
+                        INSERT INTO keyword_rules (bank, keyword, branch, category, hit_count)
+                        VALUES (%s, %s, %s, %s, %s)
+                        ON CONFLICT (bank, keyword, branch, category) DO NOTHING
+                    """, (bank, rule["keyword"], rule["branch"], cat, rule.get("count", 0)))
+                else:
+                    # SQLite: INSERT OR IGNORE 문법
+                    c.execute("""
+                        INSERT OR IGNORE INTO keyword_rules (bank, keyword, branch, category, hit_count)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (bank, rule["keyword"], rule["branch"], cat, rule.get("count", 0)))
+
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"키워드 규칙 로드 오류: {e}")
 
 
 def _normalize_category(cat: str) -> str:
@@ -233,10 +257,13 @@ def _normalize_category(cat: str) -> str:
 
 def upsert_card_sales(df: pd.DataFrame, source: str, year: int, month: int):
     conn = get_conn()
-    conn.execute(
-        "DELETE FROM card_sales WHERE source=? AND year=? AND month=?",
-        (source, year, month)
-    )
+    c = conn.cursor()
+
+    if USE_POSTGRES:
+        c.execute("DELETE FROM card_sales WHERE source=%s AND year=%s AND month=%s", (source, year, month))
+    else:
+        c.execute("DELETE FROM card_sales WHERE source=? AND year=? AND month=?", (source, year, month))
+
     df = df.copy()
     df["source"] = source
     df["year"] = year
@@ -248,21 +275,42 @@ def upsert_card_sales(df: pd.DataFrame, source: str, year: int, month: int):
 
 def get_card_by_branch(year: int, month: int = None):
     conn = get_conn()
-    mf = "AND month=:month" if month else ""
-    params = {"year": year}
+    mf = "AND month=%s" if month and USE_POSTGRES else "AND month=?" if month else ""
+    params = {"year": year} if USE_POSTGRES else [year]
+
     if month:
-        params["month"] = month
-    df = pd.read_sql(f"""
-        SELECT branch,
-               SUM(total_amount)  as card_total,
-               SUM(vat)           as card_vat,
-               SUM(supply_amount) as card_supply,
-               SUM(fee)           as card_fee,
-               SUM(net_amount)    as card_net
-        FROM card_sales
-        WHERE year=:year {mf}
-        GROUP BY branch
-    """, conn, params=params)
+        if USE_POSTGRES:
+            params["month"] = month
+        else:
+            params.append(month)
+
+    if USE_POSTGRES:
+        query = f"""
+            SELECT branch,
+                   SUM(total_amount)  as card_total,
+                   SUM(vat)           as card_vat,
+                   SUM(supply_amount) as card_supply,
+                   SUM(fee)           as card_fee,
+                   SUM(net_amount)    as card_net
+            FROM card_sales
+            WHERE year=%(year)s {mf}
+            GROUP BY branch
+        """
+        df = pd.read_sql(query, conn, params=params)
+    else:
+        query = f"""
+            SELECT branch,
+                   SUM(total_amount)  as card_total,
+                   SUM(vat)           as card_vat,
+                   SUM(supply_amount) as card_supply,
+                   SUM(fee)           as card_fee,
+                   SUM(net_amount)    as card_net
+            FROM card_sales
+            WHERE year=? {mf}
+            GROUP BY branch
+        """
+        df = pd.read_sql(query, conn, params=params)
+
     conn.close()
     return df
 
@@ -271,10 +319,13 @@ def get_card_by_branch(year: int, month: int = None):
 
 def upsert_bank_transactions(df: pd.DataFrame, bank: str, year: int, month: int):
     conn = get_conn()
-    conn.execute(
-        "DELETE FROM bank_transactions WHERE bank=? AND year=? AND month=?",
-        (bank, year, month)
-    )
+    c = conn.cursor()
+
+    if USE_POSTGRES:
+        c.execute("DELETE FROM bank_transactions WHERE bank=%s AND year=%s AND month=%s", (bank, year, month))
+    else:
+        c.execute("DELETE FROM bank_transactions WHERE bank=? AND year=? AND month=?", (bank, year, month))
+
     df = df.copy()
     df["bank"] = bank
     df["year"] = year
@@ -287,47 +338,91 @@ def upsert_bank_transactions(df: pd.DataFrame, bank: str, year: int, month: int)
 def get_branch_cash_revenue(year: int, month: int = None):
     """통장 현금 매출: 공급가액(deposit - vat)과 VAT 반환"""
     conn = get_conn()
-    mf = "AND month=:month" if month else ""
-    params = {"year": year}
+    mf = "AND month=%s" if month and USE_POSTGRES else "AND month=?" if month else ""
+    params = {"year": year} if USE_POSTGRES else [year]
+
     if month:
-        params["month"] = month
+        if USE_POSTGRES:
+            params["month"] = month
+        else:
+            params.append(month)
+
     revenue_cats = (
         "'기타매출(현금)','PT매출(현금)','GX매출(현금)',"
         "'골프매출(현금)','키즈매출(현금)','도급비','시설상환비','카페매출'"
     )
-    df = pd.read_sql(f"""
-        SELECT branch,
-               SUM(deposit - vat) as cash_supply,
-               SUM(vat)           as cash_vat,
-               SUM(deposit)       as cash_total
-        FROM bank_transactions
-        WHERE year=:year {mf}
-          AND is_excluded=0
-          AND category IN ({revenue_cats})
-          AND deposit > 0
-        GROUP BY branch
-    """, conn, params=params)
+
+    if USE_POSTGRES:
+        query = f"""
+            SELECT branch,
+                   SUM(deposit - vat) as cash_supply,
+                   SUM(vat)           as cash_vat,
+                   SUM(deposit)       as cash_total
+            FROM bank_transactions
+            WHERE year=%(year)s {mf}
+              AND is_excluded=0
+              AND category IN ({revenue_cats})
+              AND deposit > 0
+            GROUP BY branch
+        """
+        df = pd.read_sql(query, conn, params=params)
+    else:
+        query = f"""
+            SELECT branch,
+                   SUM(deposit - vat) as cash_supply,
+                   SUM(vat)           as cash_vat,
+                   SUM(deposit)       as cash_total
+            FROM bank_transactions
+            WHERE year=? {mf}
+              AND is_excluded=0
+              AND category IN ({revenue_cats})
+              AND deposit > 0
+            GROUP BY branch
+        """
+        df = pd.read_sql(query, conn, params=params)
+
     conn.close()
     return df
 
 
 def get_expense_by_category(year: int, month: int = None, branch: str = None):
     conn = get_conn()
-    filters = ["year=:year", "is_excluded=0", "withdrawal > 0"]
-    params = {"year": year}
-    if month:
-        filters.append("month=:month")
-        params["month"] = month
-    if branch:
-        filters.append("branch=:branch")
-        params["branch"] = branch
-    where = " AND ".join(filters)
-    df = pd.read_sql(f"""
-        SELECT branch, month, category, SUM(withdrawal) as amount, SUM(vat) as vat
-        FROM bank_transactions
-        WHERE {where}
-        GROUP BY branch, month, category
-    """, conn, params=params)
+
+    if USE_POSTGRES:
+        filters = ["year=%(year)s", "is_excluded=0", "withdrawal > 0"]
+        params = {"year": year}
+        if month:
+            filters.append("month=%(month)s")
+            params["month"] = month
+        if branch:
+            filters.append("branch=%(branch)s")
+            params["branch"] = branch
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, month, category, SUM(withdrawal) as amount, SUM(vat) as vat
+            FROM bank_transactions
+            WHERE {where}
+            GROUP BY branch, month, category
+        """
+        df = pd.read_sql(query, conn, params=params)
+    else:
+        filters = ["year=?", "is_excluded=0", "withdrawal > 0"]
+        params = [year]
+        if month:
+            filters.append("month=?")
+            params.append(month)
+        if branch:
+            filters.append("branch=?")
+            params.append(branch)
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, month, category, SUM(withdrawal) as amount, SUM(vat) as vat
+            FROM bank_transactions
+            WHERE {where}
+            GROUP BY branch, month, category
+        """
+        df = pd.read_sql(query, conn, params=params)
+
     conn.close()
     return df
 
@@ -344,10 +439,19 @@ def get_unreviewed_transactions():
 
 def update_transaction_classification(tx_id: int, branch: str, category: str):
     conn = get_conn()
-    conn.execute(
-        "UPDATE bank_transactions SET branch=?, category=?, needs_review=0 WHERE id=?",
-        (branch, category, tx_id)
-    )
+    c = conn.cursor()
+
+    if USE_POSTGRES:
+        c.execute(
+            "UPDATE bank_transactions SET branch=%s, category=%s, needs_review=0 WHERE id=%s",
+            (branch, category, tx_id)
+        )
+    else:
+        c.execute(
+            "UPDATE bank_transactions SET branch=?, category=?, needs_review=0 WHERE id=?",
+            (branch, category, tx_id)
+        )
+
     conn.commit()
     conn.close()
 
@@ -356,10 +460,19 @@ def update_transaction_classification(tx_id: int, branch: str, category: str):
 
 def upsert_payroll(df: pd.DataFrame, year: int, month: int, pay_type: str):
     conn = get_conn()
-    conn.execute(
-        "DELETE FROM payroll WHERE year=? AND month=? AND type=?",
-        (year, month, pay_type)
-    )
+    c = conn.cursor()
+
+    if USE_POSTGRES:
+        c.execute(
+            "DELETE FROM payroll WHERE year=%s AND month=%s AND type=%s",
+            (year, month, pay_type)
+        )
+    else:
+        c.execute(
+            "DELETE FROM payroll WHERE year=? AND month=? AND type=?",
+            (year, month, pay_type)
+        )
+
     df = df.copy()
     df["year"] = year
     df["month"] = month
@@ -371,27 +484,54 @@ def upsert_payroll(df: pd.DataFrame, year: int, month: int, pay_type: str):
 
 def get_payroll_summary(year: int, month: int = None, branch: str = None):
     conn = get_conn()
-    filters = ["year=:year"]
-    params = {"year": year}
-    if month:
-        filters.append("month=:month")
-        params["month"] = month
-    if branch:
-        filters.append("branch=:branch")
-        params["branch"] = branch
-    where = " AND ".join(filters)
-    df = pd.read_sql(f"""
-        SELECT branch, month, type,
-               SUM(gross_pay)  as gross_pay,
-               SUM(net_pay)    as net_pay,
-               SUM(insurance)  as insurance,
-               SUM(income_tax) as income_tax,
-               SUM(local_tax)  as local_tax,
-               SUM(headcount)  as headcount
-        FROM payroll
-        WHERE {where}
-        GROUP BY branch, month, type
-    """, conn, params=params)
+
+    if USE_POSTGRES:
+        filters = ["year=%(year)s"]
+        params = {"year": year}
+        if month:
+            filters.append("month=%(month)s")
+            params["month"] = month
+        if branch:
+            filters.append("branch=%(branch)s")
+            params["branch"] = branch
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, month, type,
+                   SUM(gross_pay)  as gross_pay,
+                   SUM(net_pay)    as net_pay,
+                   SUM(insurance)  as insurance,
+                   SUM(income_tax) as income_tax,
+                   SUM(local_tax)  as local_tax,
+                   SUM(headcount)  as headcount
+            FROM payroll
+            WHERE {where}
+            GROUP BY branch, month, type
+        """
+        df = pd.read_sql(query, conn, params=params)
+    else:
+        filters = ["year=?"]
+        params = [year]
+        if month:
+            filters.append("month=?")
+            params.append(month)
+        if branch:
+            filters.append("branch=?")
+            params.append(branch)
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, month, type,
+                   SUM(gross_pay)  as gross_pay,
+                   SUM(net_pay)    as net_pay,
+                   SUM(insurance)  as insurance,
+                   SUM(income_tax) as income_tax,
+                   SUM(local_tax)  as local_tax,
+                   SUM(headcount)  as headcount
+            FROM payroll
+            WHERE {where}
+            GROUP BY branch, month, type
+        """
+        df = pd.read_sql(query, conn, params=params)
+
     conn.close()
     return df
 
@@ -399,10 +539,16 @@ def get_payroll_summary(year: int, month: int = None, branch: str = None):
 def get_keyword_rules(bank: str = None):
     conn = get_conn()
     if bank:
-        df = pd.read_sql(
-            "SELECT * FROM keyword_rules WHERE bank=? ORDER BY hit_count DESC",
-            conn, params=(bank,)
-        )
+        if USE_POSTGRES:
+            df = pd.read_sql(
+                "SELECT * FROM keyword_rules WHERE bank=%s ORDER BY hit_count DESC",
+                conn, params=(bank,)
+            )
+        else:
+            df = pd.read_sql(
+                "SELECT * FROM keyword_rules WHERE bank=? ORDER BY hit_count DESC",
+                conn, params=(bank,)
+            )
     else:
         df = pd.read_sql(
             "SELECT * FROM keyword_rules ORDER BY bank, hit_count DESC", conn
