@@ -4,7 +4,7 @@ import os
 import sys
 
 # .streamlit/secrets.toml에서 환경변수 로드
-os.environ["DATABASE_URL"] = "postgresql://postgres:[Fkdhszlwm85]@db.rmqfbwpsmypsbeiefjuk.supabase.co:5432/postgres"
+os.environ["DATABASE_URL"] = "postgresql://postgres:Fkdhszlwm85@db.rmqfbwpsmypsbeiefjuk.supabase.co:5432/postgres"
 
 try:
     from modules.db import get_conn, init_db, USE_POSTGRES

@@ -13,10 +13,19 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 USE_POSTGRES = DATABASE_URL is not None
 
 # SQLAlchemy 엔진 (pandas read_sql용)
-if USE_POSTGRES:
-    engine = create_engine(DATABASE_URL, pool_pre_ping=True, pool_recycle=3600)
-else:
-    engine = None
+def _build_engine():
+    if not USE_POSTGRES:
+        return None
+    url = DATABASE_URL
+    # postgresql:// → postgresql+psycopg2:// 형식으로 변환
+    if url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    # SSL 추가 (Supabase 필수)
+    if "sslmode" not in url:
+        url += "?sslmode=require"
+    return create_engine(url, pool_pre_ping=True, pool_recycle=3600)
+
+engine = _build_engine()
 
 # 대시보드 기준 계정과목 체계
 REVENUE_CATEGORIES = {
