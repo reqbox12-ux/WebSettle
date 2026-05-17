@@ -18,80 +18,116 @@ def _to_int(val) -> int:
 
 
 # ── 카드사 결과 집계 조회 (월별 파일) ────────────────────────
-# 컬럼: No(0) 매입사(1) 사업자번호(2) IND(3) 청구일(4) 입금일(5) 계좌번호(6)
-#        접수건(7) 접수금액(8) 반송건(9) 반송금액(10) 보류건(11) 보류금액(12)
-#        합계건(13) O=합계금액(14) P=수수료(15) Q=입금액(16) 가맹점번호(17) S=가맹점명(18)
+# 컬럼 구조: O=합계금액, P=수수료, Q=입금액, S=가맹점명 (위치로 고정하지 않고 헤더명으로 탐지)
+
+def _find_col(header_list: list, keywords: list, fallback: int) -> int:
+    """헤더 목록에서 keyword를 포함하는 첫 번째 컬럼 인덱스 반환. 없으면 fallback."""
+    for kw in keywords:
+        for i, h in enumerate(header_list):
+            if kw in str(h).strip():
+                return i
+    return fallback
+
+
+def _find_header_row(filepath: str, search_kws=('가맹점', '합계금액', '수수료')) -> int:
+    """헤더 행 번호 자동 탐지 (상위 10행 스캔)."""
+    probe = pd.read_excel(filepath, header=None, dtype=str, nrows=10)
+    for i, row in probe.iterrows():
+        vals = [str(v).strip() for v in row if pd.notna(v)]
+        if sum(1 for v in vals if any(k in v for k in search_kws)) >= 2:
+            return i
+    return 0
+
 
 def parse_card_aggregate(filepath: str, year: int, month: int) -> pd.DataFrame:
     merchant_map = _load_branch_mapping()
-    df = pd.read_excel(filepath, header=0, dtype=str)
 
-    # 헤더 행 기준으로 열 인덱스 사용 (이름이 달라도 위치로)
-    cols = list(df.columns)
-    # O=14, P=15, Q=16, S=18  (0-based after header)
-    df.columns = range(len(cols))
+    header_row = _find_header_row(filepath)
+    df = pd.read_excel(filepath, header=header_row, dtype=str)
+    n = len(df.columns)
+    hdrs = [str(c).strip() for c in df.columns]
+
+    # 컬럼 위치를 헤더명으로 탐지 → 없으면 원래 고정 인덱스로 fallback
+    c_merchant = _find_col(hdrs, ['가맹점명', '가맹점 명', '가맹점'], min(18, n-1))
+    c_total    = _find_col(hdrs, ['합계금액', '총금액', '합  계금액'], min(14, n-1))
+    c_fee      = _find_col(hdrs, ['수수료'], min(15, n-1))
+    c_date     = _find_col(hdrs, ['청구일', '입금일', '매입일'], min(4, n-1))
+    c_company  = _find_col(hdrs, ['매입사', '카드사'], min(1, n-1))
+
+    df.columns = range(n)
 
     rows = []
     for _, row in df.iterrows():
-        merchant = str(row[18]).strip()
-        total_amount = _to_int(row[14])   # O열: 합계금액
-        fee          = _to_int(row[15])   # P열: 수수료
-        vat          = total_amount // 11  # 부가세 = 합계 / 11
-        supply_amount = total_amount - vat # 공급가액 = 합계 - 부가세
-        net_amount    = supply_amount - fee # 실수령 = 공급가액 - 수수료
-        branch = merchant_map.get(merchant, "미매핑")
+        merchant     = str(row.iloc[c_merchant]).strip()
+        total_amount = _to_int(row.iloc[c_total])
+        fee          = _to_int(row.iloc[c_fee])
 
-        if total_amount == 0:
+        if total_amount == 0 or merchant in ('nan', '', 'None'):
             continue
 
+        vat           = total_amount // 11
+        supply_amount = total_amount - vat
+        net_amount    = supply_amount - fee
+        branch        = merchant_map.get(merchant, "미매핑")
+
         rows.append({
-            "branch": branch,
-            "raw_merchant": merchant,
-            "card_company": str(row[1]).strip() if pd.notna(row[1]) else "",
-            "total_amount": total_amount,
-            "vat": vat,
-            "supply_amount": supply_amount,
-            "fee": fee,
-            "net_amount": net_amount,
-            "sale_date": str(row[4]).strip() if pd.notna(row[4]) else "",
+            "branch":         branch,
+            "raw_merchant":   merchant,
+            "card_company":   str(row.iloc[c_company]).strip() if pd.notna(row.iloc[c_company]) else "",
+            "total_amount":   total_amount,
+            "vat":            vat,
+            "supply_amount":  supply_amount,
+            "fee":            fee,
+            "net_amount":     net_amount,
+            "sale_date":      str(row.iloc[c_date]).strip() if pd.notna(row.iloc[c_date]) else "",
         })
 
     return pd.DataFrame(rows)
 
 
 # ── 신용카드 파일 ────────────────────────────────────────
-# 컬럼: A=가맹점명(0) 거래일자(1) 가맹점번호(2) 단말기번호(3) 카드번호(4)
-#        승인번호(5) 거래금액(6) 공급가액(7) I=부가세(8) 과세(9) 비과세(10)
-#        L=수수료(11) 수수료율(12) N=입금예정액(13)
+# 컬럼: 가맹점명(A) 거래일자(B) 거래금액(G) 공급가액(H) 부가세(I) 수수료(L)
 
 def parse_credit_card(filepath: str, year: int, month: int) -> pd.DataFrame:
     merchant_map = _load_branch_mapping()
-    df = pd.read_excel(filepath, header=0, dtype=str)
-    df.columns = range(len(df.columns))
+
+    header_row = _find_header_row(filepath, search_kws=('가맹점', '거래금액', '공급가액', '부가세'))
+    df = pd.read_excel(filepath, header=header_row, dtype=str)
+    n = len(df.columns)
+    hdrs = [str(c).strip() for c in df.columns]
+
+    c_merchant = _find_col(hdrs, ['가맹점명', '가맹점'], min(0, n-1))
+    c_total    = _find_col(hdrs, ['거래금액', '총금액'], min(6, n-1))
+    c_supply   = _find_col(hdrs, ['공급가액', '공급금액'], min(7, n-1))
+    c_vat      = _find_col(hdrs, ['부가세', '부가가치세'], min(8, n-1))
+    c_fee      = _find_col(hdrs, ['수수료'], min(11, n-1))
+    c_date     = _find_col(hdrs, ['거래일자', '거래일', '매입일'], min(1, n-1))
+
+    df.columns = range(n)
 
     rows = []
     for _, row in df.iterrows():
-        merchant      = str(row[0]).strip()
-        total_amount  = _to_int(row[6])        # G열: 거래금액(총액)
-        vat           = _to_int(row[8])        # I열: 부가세
-        supply_amount = _to_int(row[7])        # H열: 공급가액 = 총액 - 부가세
-        fee           = _to_int(row[11])       # L열: 수수료
-        net_amount    = supply_amount - fee    # 실수령 = 공급가액 - 수수료
-        branch = merchant_map.get(merchant, "미매핑")
+        merchant      = str(row.iloc[c_merchant]).strip()
+        total_amount  = _to_int(row.iloc[c_total])
+        supply_amount = _to_int(row.iloc[c_supply])
+        vat           = _to_int(row.iloc[c_vat])
+        fee           = _to_int(row.iloc[c_fee])
+        net_amount    = supply_amount - fee
+        branch        = merchant_map.get(merchant, "미매핑")
 
-        if total_amount == 0:
+        if total_amount == 0 or merchant in ('nan', '', 'None'):
             continue
 
         rows.append({
-            "branch": branch,
-            "raw_merchant": merchant,
-            "card_company": "",
-            "total_amount": total_amount,
-            "vat": vat,
+            "branch":        branch,
+            "raw_merchant":  merchant,
+            "card_company":  "",
+            "total_amount":  total_amount,
+            "vat":           vat,
             "supply_amount": supply_amount,
-            "fee": fee,
-            "net_amount": net_amount,
-            "sale_date": str(row[1]).strip() if pd.notna(row[1]) else "",
+            "fee":           fee,
+            "net_amount":    net_amount,
+            "sale_date":     str(row.iloc[c_date]).strip() if pd.notna(row.iloc[c_date]) else "",
         })
 
     return pd.DataFrame(rows)
