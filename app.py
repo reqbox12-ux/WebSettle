@@ -25,9 +25,8 @@ from modules.classifier import classify_transactions, add_rule
 from modules.auth import (
     init_users_table, verify_login, get_user_by_username,
     get_all_users, add_user, delete_user, change_password,
-    make_token, validate_token, TOKEN_COOKIE,
+    create_session, get_session_user, delete_session,
 )
-import extra_streamlit_components as stx
 from modules.ai_classifier import (
     load_api_key, save_api_key,
     ai_classify_batch, ai_extract_keyword,
@@ -278,55 +277,74 @@ init_db()
 load_keyword_rules()
 init_users_table()
 
-# ── 쿠키 매니저 (로그인 유지용) ──────────────────────────────
-_cookie_mgr = stx.CookieManager(key="laon_ws")
-
 # ══════════════════════════════════════════════════════════════════════
 #  로그인 페이지
 # ══════════════════════════════════════════════════════════════════════
+def _login_logo_html():
+    """로그인 화면 전용 로고 HTML (get_logo_html 정의 전에 호출되므로 인라인)"""
+    logo_path = Path("assets/logo.png")
+    if logo_path.exists():
+        b64 = base64.b64encode(logo_path.read_bytes()).decode()
+        return (
+            f'<img src="data:image/png;base64,{b64}" '
+            f'style="width:220px;height:auto;display:block;margin:0 auto 12px" alt="LAON SPORTS">'
+        )
+    return (
+        '<svg viewBox="0 0 210 80" xmlns="http://www.w3.org/2000/svg" '
+        'style="width:220px;height:auto;display:block;margin:0 auto 12px">'
+        '<text x="2" y="56" fill="#E60028" font-size="62" font-weight="900" '
+        'font-family="Arial Black,Impact,system-ui,sans-serif" letter-spacing="-3">LAON</text>'
+        '<text x="7" y="74" fill="#E60028" font-size="13.5" font-weight="700" '
+        'font-family="Arial,Helvetica,system-ui,sans-serif" letter-spacing="10">SPORTS</text>'
+        '</svg>'
+    )
+
+
 def _show_login():
     st.markdown("""<style>
     #MainMenu,header,footer{visibility:hidden}
-    .login-title{font-size:24px;font-weight:700;color:#1F1B1B;margin-bottom:4px;text-align:center}
     .login-sub{font-size:13px;color:#9A918C;text-align:center;margin-bottom:24px}
     </style>""", unsafe_allow_html=True)
 
-    st.markdown("<div style='height:10vh'></div>", unsafe_allow_html=True)
-    col = st.columns([1, 1, 1])[1]
+    st.markdown("<div style='height:8vh'></div>", unsafe_allow_html=True)
+    col = st.columns([1, 1.2, 1])[1]
     with col:
-        st.markdown('<div style="text-align:center;font-size:36px;font-weight:900;color:#E60028;letter-spacing:-1px">LAON</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-title">WebSettle</div>', unsafe_allow_html=True)
+        st.markdown(
+            f'<div style="text-align:center;margin-bottom:8px">{_login_logo_html()}</div>',
+            unsafe_allow_html=True,
+        )
         st.markdown('<div class="login-sub">라온스포츠 정산 시스템</div>', unsafe_allow_html=True)
         username = st.text_input("아이디", placeholder="아이디를 입력하세요", key="login_user")
         password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요", key="login_pw")
         if st.button("로그인", type="primary", use_container_width=True, key="login_btn"):
             user = verify_login(username, password)
             if user:
-                token = make_token(user["username"])
-                _cookie_mgr.set(TOKEN_COOKIE, token, max_age=30 * 24 * 3600)  # 30일
-                st.session_state.authenticated = True
-                st.session_state.auth_user     = user
+                _tok = create_session(user["username"])
+                st.session_state.authenticated  = True
+                st.session_state.auth_user      = user
+                st.session_state.session_token  = _tok
+                st.query_params.update({"page": "dashboard", "t": _tok})
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
 
-# ── 인증 체크 (session_state → 쿠키 순서로 확인) ─────────────
+
+# ── 인증 체크 (URL 토큰 → session_state 순서로 확인) ─────────────
+_session_token = st.query_params.get("t", "")
 if not st.session_state.get("authenticated", False):
-    # 쿠키에 토큰이 있으면 자동 로그인
-    _token = _cookie_mgr.get(TOKEN_COOKIE)
-    if _token:
-        _uname = validate_token(_token)
-        if _uname:
-            _user = get_user_by_username(_uname)
-            if _user:
-                st.session_state.authenticated = True
-                st.session_state.auth_user     = _user
+    if _session_token:
+        _user = get_session_user(_session_token)
+        if _user:
+            st.session_state.authenticated = True
+            st.session_state.auth_user     = _user
+            st.session_state.session_token = _session_token
 
 if not st.session_state.get("authenticated", False):
     _show_login()
     st.stop()
 
-_auth_user = st.session_state.auth_user   # {"username","name","role"}
+_auth_user     = st.session_state.auth_user          # {"username","name","role"}
+_session_token = st.session_state.get("session_token", _session_token)
 
 # ══════════════════════════════════════════════════════════════════════
 #  State & routing
@@ -463,7 +481,7 @@ def render_sidebar():
     nav = ""
     for p, lbl, ic in items:
         cls = 'on' if page == p else ''
-        nav += f'<a href="?page={p}" target="_self" class="sb-item {cls}">{ic}{lbl}</a>'
+        nav += f'<a href="?page={p}&t={_session_token}" target="_self" class="sb-item {cls}">{ic}{lbl}</a>'
 
     role_lbl = "관리자" if _auth_user.get("role") == "admin" else "사용자"
     user_html = f'''<div style="padding:12px 16px;margin:8px 0;background:var(--sf2);border-radius:var(--rs)">
@@ -486,9 +504,11 @@ def render_sidebar():
     # 로그아웃 버튼 (Streamlit 네이티브)
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
     if st.button("🚪 로그아웃", use_container_width=True, key="logout_btn"):
-        _cookie_mgr.delete(TOKEN_COOKIE)
+        delete_session(_session_token)
         st.session_state.authenticated = False
         st.session_state.auth_user     = {}
+        st.session_state.session_token = ""
+        st.query_params.clear()
         st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════
@@ -499,7 +519,7 @@ def render_bnav():
     h = '<div class="bnav">'
     for p, lbl, ic in items:
         cls = 'on' if page == p else ''
-        h += f'<a href="?page={p}" target="_self" class="{cls}">{ic}<span>{lbl}</span></a>'
+        h += f'<a href="?page={p}&t={_session_token}" target="_self" class="{cls}">{ic}<span>{lbl}</span></a>'
     h += '</div>'
     st.markdown(h, unsafe_allow_html=True)
 

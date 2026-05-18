@@ -129,6 +129,13 @@ def init_db():
                     UNIQUE(bank, keyword, branch, category)
                 )
             """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS sessions (
+                    token      TEXT PRIMARY KEY,
+                    username   TEXT NOT NULL,
+                    expires_at BIGINT NOT NULL
+                )
+            """)
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -194,6 +201,12 @@ def init_db():
                 category   TEXT,
                 hit_count  INTEGER DEFAULT 0,
                 UNIQUE(bank, keyword, branch, category)
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token      TEXT PRIMARY KEY,
+                username   TEXT NOT NULL,
+                expires_at INTEGER NOT NULL
             );
         """)
         # SQLite 마이그레이션

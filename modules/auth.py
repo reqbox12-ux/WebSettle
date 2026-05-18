@@ -12,6 +12,8 @@ import json
 from pathlib import Path
 from modules.db import get_conn
 
+SESSION_MAX_DAYS = 30
+
 SETTINGS_PATH = Path(__file__).parent.parent / "data" / "settings.json"
 TOKEN_COOKIE   = "ws_auth_token"
 TOKEN_MAX_DAYS = 30
@@ -159,3 +161,52 @@ def change_password(username: str, new_password: str) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── 세션 관리 (URL 토큰 방식) ──────────────────────────────────
+
+def create_session(username: str) -> str:
+    """새 세션 토큰 생성 후 DB에 저장, 토큰 문자열 반환"""
+    token = secrets.token_urlsafe(32)
+    expires_at = int(time.time()) + SESSION_MAX_DAYS * 86400
+    try:
+        conn = get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions (token, username, expires_at) VALUES (?,?,?)",
+            (token, username, expires_at)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[session create] {e}")
+    return token
+
+
+def get_session_user(token: str) -> dict | None:
+    """토큰으로 유저 정보 조회 — 만료·없으면 None"""
+    if not token:
+        return None
+    try:
+        conn = get_conn()
+        row = conn.execute(
+            "SELECT username, expires_at FROM sessions WHERE token=?", (token,)
+        ).fetchone()
+        conn.close()
+        if row and int(time.time()) < row[1]:
+            return get_user_by_username(row[0])
+    except Exception as e:
+        print(f"[session get] {e}")
+    return None
+
+
+def delete_session(token: str):
+    """세션 토큰 삭제 (로그아웃)"""
+    if not token:
+        return
+    try:
+        conn = get_conn()
+        conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"[session delete] {e}")
