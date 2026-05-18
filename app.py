@@ -22,6 +22,10 @@ from modules.parser import (
     parse_payroll_freelance, parse_payroll_insured,
 )
 from modules.classifier import classify_transactions, add_rule
+from modules.auth import (
+    init_users_table, verify_login,
+    get_all_users, add_user, delete_user, change_password,
+)
 from modules.ai_classifier import (
     load_api_key, save_api_key,
     ai_classify_batch, ai_extract_keyword,
@@ -270,6 +274,51 @@ button[data-testid="collapsedControl"]{display:none!important}
 
 init_db()
 load_keyword_rules()
+init_users_table()
+
+# ══════════════════════════════════════════════════════════════════════
+#  로그인 페이지
+# ══════════════════════════════════════════════════════════════════════
+def _show_login():
+    st.markdown("""
+    <style>
+    #MainMenu,header,footer{visibility:hidden}
+    .login-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:0}
+    .login-card{background:#fff;border-radius:20px;box-shadow:0 4px 32px rgba(31,27,27,.12);padding:48px 40px 40px;width:100%;max-width:400px}
+    .login-logo{text-align:center;margin-bottom:32px}
+    .login-title{font-size:22px;font-weight:700;color:#1F1B1B;margin-bottom:4px;text-align:center}
+    .login-sub{font-size:13px;color:#9A918C;text-align:center;margin-bottom:28px}
+    </style>
+    """, unsafe_allow_html=True)
+
+    logo_svg = """<svg width="100" height="36" viewBox="0 0 260 80" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <text x="0" y="62" font-family="Arial Black,Arial" font-weight="900" font-size="72" fill="#E60028">LAON</text>
+    </svg>"""
+
+    col = st.columns([1, 2, 1])[1]
+    with col:
+        st.markdown(f'<div class="login-logo">{logo_svg}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-title">WebSettle</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-sub">라온스포츠 정산 시스템</div>', unsafe_allow_html=True)
+
+        username = st.text_input("아이디", placeholder="아이디를 입력하세요", key="login_user")
+        password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요", key="login_pw")
+
+        if st.button("로그인", type="primary", use_container_width=True, key="login_btn"):
+            user = verify_login(username, password)
+            if user:
+                st.session_state.authenticated = True
+                st.session_state.auth_user     = user
+                st.rerun()
+            else:
+                st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+# ── 인증 체크 ─────────────────────────────────────────────────
+if not st.session_state.get("authenticated", False):
+    _show_login()
+    st.stop()
+
+_auth_user = st.session_state.auth_user   # {"username","name","role"}
 
 # ══════════════════════════════════════════════════════════════════════
 #  State & routing
@@ -401,18 +450,37 @@ def build_summary(year, month):
 def render_sidebar():
     logo_h = get_logo_html(mobile=False)
     items = [('dashboard','대시보드',I_DASH),('branch','지점 상세',I_BRANCH),('upload','데이터 업로드',I_UP),('rules','규칙 관리',I_RULE)]
+    if _auth_user.get("role") == "admin":
+        items.append(('accounts','계정 관리','👤 '))
     nav = ""
     for p, lbl, ic in items:
         cls = 'on' if page == p else ''
         nav += f'<a href="?page={p}" target="_self" class="sb-item {cls}">{ic}{lbl}</a>'
+
+    role_lbl = "관리자" if _auth_user.get("role") == "admin" else "사용자"
+    user_html = f'''<div style="padding:12px 16px;margin:8px 0;background:var(--sf2);border-radius:var(--rs)">
+      <div style="font-size:12px;color:var(--ink3);margin-bottom:2px">{role_lbl}</div>
+      <div style="font-size:14px;font-weight:600;color:var(--ink)">{_auth_user.get("name","")}</div>
+    </div>'''
+
     html = f'''<div class="c-sb">
       <div class="c-sb-logo">{logo_h}</div>
       <div class="c-sb-nav">
         <div class="sb-sec">WORKSPACE</div>
         {nav}
+        <div style="margin-top:auto;padding-top:16px">
+          {user_html}
+        </div>
       </div>
     </div>'''
     st.markdown(html, unsafe_allow_html=True)
+
+    # 로그아웃 버튼 (Streamlit 네이티브)
+    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
+    if st.button("🚪 로그아웃", use_container_width=True, key="logout_btn"):
+        st.session_state.authenticated = False
+        st.session_state.auth_user     = {}
+        st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════
 #  Bottom nav (mobile)
@@ -1312,3 +1380,73 @@ elif page == 'rules':
         | 저장 시 AI 핵심 키워드 추출 | {ai_status} |
         | 계정과목 검토 AI 일괄분류 버튼 | {ai_status} |
         """)
+
+# ══════════════════════════════════════════════════════════════════════
+#  4. 계정 관리 (관리자 전용)
+# ══════════════════════════════════════════════════════════════════════
+elif page == 'accounts':
+    if _auth_user.get("role") != "admin":
+        st.error("관리자만 접근할 수 있습니다.")
+        st.stop()
+
+    st.markdown('<div class="ph"><div class="ph-title">계정 관리</div><div class="ph-sub">사용자 추가 · 삭제 · 비밀번호 변경</div></div>', unsafe_allow_html=True)
+
+    tab1, tab2, tab3 = st.tabs(["사용자 목록", "새 계정 추가", "비밀번호 변경"])
+
+    with tab1:
+        sec("전체 사용자")
+        users = get_all_users()
+        for u in users:
+            c1, c2, c3, c4 = st.columns([1.5, 1.5, 1, 1])
+            c1.markdown(f"**{u['username']}**")
+            c2.markdown(u['name'])
+            c3.markdown("🔴 관리자" if u['role'] == 'admin' else "🔵 사용자")
+            if u['username'] != 'admin':
+                if c4.button("삭제", key=f"del_{u['id']}"):
+                    delete_user(u['id'])
+                    st.success(f"'{u['username']}' 삭제 완료")
+                    st.rerun()
+            else:
+                c4.markdown("―")
+        st.caption(f"총 {len(users)}명")
+
+    with tab2:
+        sec("새 계정 추가")
+        a1, a2 = st.columns(2)
+        new_username = a1.text_input("아이디", key="new_uname")
+        new_name     = a2.text_input("이름", key="new_name")
+        a3, a4 = st.columns(2)
+        new_pw   = a3.text_input("비밀번호", type="password", key="new_upw")
+        new_role = a4.selectbox("권한", ["user", "admin"],
+                                format_func=lambda x: "관리자" if x == "admin" else "사용자",
+                                key="new_urole")
+        if st.button("계정 추가", type="primary", key="add_user_btn"):
+            if new_username and new_name and new_pw:
+                if len(new_pw) < 6:
+                    st.error("비밀번호는 6자 이상이어야 합니다.")
+                elif add_user(new_username, new_name, new_pw, new_role):
+                    st.success(f"✅ '{new_username}' 계정이 추가되었습니다.")
+                    st.rerun()
+                else:
+                    st.error("이미 존재하는 아이디입니다.")
+            else:
+                st.error("모든 항목을 입력하세요.")
+
+    with tab3:
+        sec("비밀번호 변경")
+        users = get_all_users()
+        unames = [u['username'] for u in users]
+        target = st.selectbox("계정 선택", unames, key="chpw_user",
+                              format_func=lambda x: next((f"{x} ({u['name']})" for u in users if u['username'] == x), x))
+        new_pw1 = st.text_input("새 비밀번호", type="password", key="chpw1")
+        new_pw2 = st.text_input("새 비밀번호 확인", type="password", key="chpw2")
+        if st.button("변경", type="primary", key="chpw_btn"):
+            if not new_pw1 or not new_pw2:
+                st.error("비밀번호를 입력하세요.")
+            elif new_pw1 != new_pw2:
+                st.error("비밀번호가 일치하지 않습니다.")
+            elif len(new_pw1) < 6:
+                st.error("비밀번호는 6자 이상이어야 합니다.")
+            else:
+                change_password(target, new_pw1)
+                st.success(f"✅ '{target}' 비밀번호가 변경되었습니다.")
