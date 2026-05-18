@@ -10,7 +10,8 @@ from modules.db import (
     upsert_card_sales, upsert_bank_transactions, upsert_payroll,
     get_card_by_branch, get_branch_cash_revenue,
     get_expense_by_category, get_payroll_summary,
-    get_unreviewed_transactions, update_transaction_classification,
+    get_unreviewed_transactions, get_all_bank_transactions,
+    update_transaction_classification,
     get_keyword_rules, EXPENSE_CATEGORIES,
 )
 from modules.parser import (
@@ -1040,7 +1041,7 @@ elif page == 'upload':
                             for df in bank_data.values() if not df.empty
                         )
                         if need_total > 0:
-                            st.info(f"📋 미분류 {need_total}건은 '미분류 검토' 메뉴에서 확인하세요.")
+                            st.info(f"📋 미분류 {need_total}건은 '규칙 관리 → 계정과목 검토' 메뉴에서 확인하세요.")
                     st.cache_data.clear()
 
     with tab3:
@@ -1068,40 +1069,104 @@ elif page == 'upload':
 #  3. RULES
 # ══════════════════════════════════════════════════════════════════════
 elif page == 'rules':
-    st.markdown('<div class="ph"><div class="ph-title">규칙 관리</div><div class="ph-sub">미분류 거래 검토 및 키워드 자동분류 규칙</div></div>', unsafe_allow_html=True)
+    st.markdown('<div class="ph"><div class="ph-title">규칙 관리</div><div class="ph-sub">계정과목 검토 및 키워드 자동분류 규칙</div></div>', unsafe_allow_html=True)
 
-    tab1, tab2 = st.tabs(["미분류 검토", "규칙 목록 · 추가"])
+    tab1, tab2 = st.tabs(["계정과목 검토", "규칙 목록 · 추가"])
 
+    # ── 탭1: 계정과목 검토 ─────────────────────────────────
     with tab1:
-        df = get_unreviewed_transactions()
-        if df.empty:
-            st.markdown('<div class="al al-ok">✅&nbsp; 미분류 거래가 없습니다. 모든 거래가 정상 분류되었습니다.</div>', unsafe_allow_html=True)
+        # 연/월 필터
+        fc1, fc2, fc3 = st.columns([1, 1, 2])
+        rv_year  = fc1.selectbox("연도", list(range(2024, 2028)), index=2, key="rv_year")
+        rv_month = fc2.selectbox("월",   list(range(1, 13)),      index=4, key="rv_month")
+        rv_bank  = fc3.selectbox("통장", ["전체", "hana", "신한(shinhan)"], key="rv_bank")
+
+        bank_filter = None if rv_bank == "전체" else ("shinhan" if "신한" in rv_bank else "hana")
+        rv_df = get_all_bank_transactions(rv_year, rv_month, bank_filter)
+
+        if rv_df.empty:
+            st.markdown('<div class="al al-ok">✅&nbsp; 해당 월의 거래 내역이 없습니다.</div>', unsafe_allow_html=True)
         else:
-            st.markdown(f'<div class="al al-warn">⚠️&nbsp; 미분류 거래 <b>{len(df)}건</b>을 검토해주세요.</div>', unsafe_allow_html=True)
-            for _, row in df.iterrows():
-                amt = row.deposit if row.deposit > 0 else row.withdrawal
-                tp  = "입금" if row.deposit > 0 else "출금"
-                lbl = f"[{row.bank.upper()}] {str(row.tx_date)[:10]}  ·  {row.description}  ·  {tp} {int(amt):,}원"
-                with st.expander(lbl):
-                    c1, c2, c3 = st.columns([2, 2, 1])
-                    br = c1.selectbox("지점", BRANCH_LIST, key=f"xbr_{row.id}")
-                    ct = c2.selectbox("계정과목", ALL_CATEGORIES, key=f"xct_{row.id}")
-                    if c3.button("저장", key=f"xsv_{row.id}"):
-                        update_transaction_classification(row.id, br, ct)
-                        add_rule(row.bank, row.description, br, ct)
-                        st.success("저장 완료!")
+            # 상태 필터
+            rv_status = st.radio("표시", ["전체", "미분류만"], horizontal=True, key="rv_status")
+            if rv_status == "미분류만":
+                rv_df = rv_df[rv_df["needs_review"] == 1]
+
+            # 상태 뱃지 생성
+            def _status_badge(row):
+                src = str(row.get("classification_source", "") or "")
+                if row.get("is_excluded", 0) == 1:
+                    return "⛔ 제외"
+                if src == "rule":
+                    return "✅ 자동"
+                if src == "smart":
+                    return "🔵 스마트"
+                if row.get("needs_review", 0) == 1:
+                    return "❓ 미분류"
+                return "✅ 분류됨"
+
+            total = len(rv_df)
+            unrev = int(rv_df["needs_review"].sum()) if "needs_review" in rv_df.columns else 0
+            st.caption(f"총 {total}건 · 미분류 {unrev}건")
+
+            # 거래 목록 표시 (expander per row)
+            for _, row in rv_df.iterrows():
+                amt  = int(row.get("deposit", 0) or 0) or int(row.get("withdrawal", 0) or 0)
+                tp   = "입금" if int(row.get("deposit", 0) or 0) > 0 else "출금"
+                badge = _status_badge(row)
+                bank_lbl = str(row.get("bank", "")).upper()
+                date_lbl = str(row.get("tx_date", ""))[:10]
+                desc_lbl = str(row.get("description", ""))[:30]
+                lbl = f"{badge}  [{bank_lbl}] {date_lbl}  ·  {desc_lbl}  ·  {tp} {amt:,}원"
+
+                with st.expander(lbl, expanded=(row.get("needs_review", 0) == 1)):
+                    # 현재 값
+                    cur_branch = str(row.get("branch", "") or "")
+                    cur_cat    = str(row.get("category", "") or "")
+                    counterpart = str(row.get("counterpart", "") or "")
+                    content     = str(row.get("content", "") or "")
+
+                    if counterpart or content:
+                        st.caption(f"의뢰인/수취인: {counterpart}  |  내용: {content}")
+
+                    ci1, ci2, ci3, ci4 = st.columns([2, 2, 1, 1])
+
+                    # 지점 선택
+                    br_idx = BRANCH_LIST.index(cur_branch) if cur_branch in BRANCH_LIST else 0
+                    new_br = ci1.selectbox("지점", BRANCH_LIST, index=br_idx, key=f"rv_br_{row.id}")
+
+                    # 계정과목 선택
+                    cat_opts = [""] + ALL_CATEGORIES
+                    cat_idx  = cat_opts.index(cur_cat) if cur_cat in cat_opts else 0
+                    new_ct   = ci2.selectbox("계정과목", cat_opts, index=cat_idx, key=f"rv_ct_{row.id}")
+
+                    # 저장 버튼
+                    if ci3.button("저장", key=f"rv_sv_{row.id}", type="primary"):
+                        if new_br and new_ct:
+                            update_transaction_classification(int(row.id), new_br, new_ct)
+                            add_rule(str(row.bank), str(row.description), new_br, new_ct)
+                            st.success("저장 완료!")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error("지점과 계정과목을 모두 선택하세요.")
+
+                    # 제외 버튼
+                    if ci4.button("제외", key=f"rv_ex_{row.id}"):
+                        update_transaction_classification(int(row.id), cur_branch or "본사", "제외")
                         st.rerun()
 
+    # ── 탭2: 규칙 목록 · 추가 ──────────────────────────────
     with tab2:
         sec("규칙 목록")
-        bf = st.selectbox("통장", ["전체","hana","shinhan"])
-        rdf = get_keyword_rules(None if bf=="전체" else bf)
+        bf = st.selectbox("통장", ["전체", "hana", "shinhan"])
+        rdf = get_keyword_rules(None if bf == "전체" else bf)
         st.dataframe(rdf, use_container_width=True)
         st.caption(f"총 {len(rdf)}개 규칙")
 
         sec("새 규칙 추가")
         c1, c2 = st.columns(2)
-        nb = c1.selectbox("통장", ["hana","shinhan"], key="nb")
+        nb = c1.selectbox("통장", ["hana", "shinhan"], key="nb")
         nk = c2.text_input("키워드 (적요에 포함된 문자)")
         c3, c4 = st.columns(2)
         nbr = c3.selectbox("지점", BRANCH_LIST, key="nbr")

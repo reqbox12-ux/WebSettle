@@ -84,22 +84,23 @@ def init_db():
             """)
             c.execute("""
                 CREATE TABLE IF NOT EXISTS bank_transactions (
-                    id           SERIAL PRIMARY KEY,
-                    year         INTEGER,
-                    month        INTEGER,
-                    bank         TEXT,
-                    tx_date      TEXT,
-                    description  TEXT,
-                    counterpart  TEXT,
-                    deposit      INTEGER DEFAULT 0,
-                    withdrawal   INTEGER DEFAULT 0,
-                    balance      INTEGER DEFAULT 0,
-                    branch       TEXT,
-                    content      TEXT,
-                    category     TEXT,
-                    vat          INTEGER DEFAULT 0,
-                    is_excluded  INTEGER DEFAULT 0,
-                    needs_review INTEGER DEFAULT 0
+                    id                    SERIAL PRIMARY KEY,
+                    year                  INTEGER,
+                    month                 INTEGER,
+                    bank                  TEXT,
+                    tx_date               TEXT,
+                    description           TEXT,
+                    counterpart           TEXT,
+                    deposit               INTEGER DEFAULT 0,
+                    withdrawal            INTEGER DEFAULT 0,
+                    balance               INTEGER DEFAULT 0,
+                    branch                TEXT,
+                    content               TEXT,
+                    category              TEXT,
+                    vat                   INTEGER DEFAULT 0,
+                    is_excluded           INTEGER DEFAULT 0,
+                    needs_review          INTEGER DEFAULT 0,
+                    classification_source TEXT DEFAULT ''
                 )
             """)
             c.execute("""
@@ -152,22 +153,23 @@ def init_db():
             );
 
             CREATE TABLE IF NOT EXISTS bank_transactions (
-                id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                year         INTEGER,
-                month        INTEGER,
-                bank         TEXT,
-                tx_date      TEXT,
-                description  TEXT,
-                counterpart  TEXT,
-                deposit      INTEGER DEFAULT 0,
-                withdrawal   INTEGER DEFAULT 0,
-                balance      INTEGER DEFAULT 0,
-                branch       TEXT,
-                content      TEXT,
-                category     TEXT,
-                vat          INTEGER DEFAULT 0,
-                is_excluded  INTEGER DEFAULT 0,
-                needs_review INTEGER DEFAULT 0
+                id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+                year                  INTEGER,
+                month                 INTEGER,
+                bank                  TEXT,
+                tx_date               TEXT,
+                description           TEXT,
+                counterpart           TEXT,
+                deposit               INTEGER DEFAULT 0,
+                withdrawal            INTEGER DEFAULT 0,
+                balance               INTEGER DEFAULT 0,
+                branch                TEXT,
+                content               TEXT,
+                category              TEXT,
+                vat                   INTEGER DEFAULT 0,
+                is_excluded           INTEGER DEFAULT 0,
+                needs_review          INTEGER DEFAULT 0,
+                classification_source TEXT DEFAULT ''
             );
 
             CREATE TABLE IF NOT EXISTS payroll (
@@ -197,6 +199,7 @@ def init_db():
         # SQLite 마이그레이션
         for col_def in [
             ("bank_transactions", "vat", "INTEGER DEFAULT 0"),
+            ("bank_transactions", "classification_source", "TEXT DEFAULT ''"),
             ("card_sales", "source", "TEXT"),
             ("card_sales", "total_amount", "INTEGER DEFAULT 0"),
             ("card_sales", "vat", "INTEGER DEFAULT 0"),
@@ -452,6 +455,31 @@ def get_unreviewed_transactions():
     )
     conn.close()
     return df
+
+
+def get_all_bank_transactions(year: int, month: int, bank: str = None) -> pd.DataFrame:
+    """연/월 기준 통장 거래 전체 조회 (계정과목 검토용)"""
+    if USE_POSTGRES:
+        filters = ["year=:year", "month=:month"]
+        params = {"year": year, "month": month}
+        if bank:
+            filters.append("bank=:bank")
+            params["bank"] = bank
+        where = " AND ".join(filters)
+        query = f"SELECT * FROM bank_transactions WHERE {where} ORDER BY bank, tx_date"
+        return pd.read_sql(text(query), engine, params=params)
+    else:
+        conn = get_conn()
+        filters = ["year=?", "month=?"]
+        params = [year, month]
+        if bank:
+            filters.append("bank=?")
+            params.append(bank)
+        where = " AND ".join(filters)
+        query = f"SELECT * FROM bank_transactions WHERE {where} ORDER BY bank, tx_date"
+        df = pd.read_sql(query, conn, params=params)
+        conn.close()
+        return df
 
 
 def update_transaction_classification(tx_id: int, branch: str, category: str):
