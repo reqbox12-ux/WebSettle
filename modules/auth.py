@@ -165,10 +165,12 @@ def change_password(username: str, new_password: str) -> bool:
 
 # ── 세션 관리 (URL 토큰 방식) ──────────────────────────────────
 
-def create_session(username: str) -> str:
-    """새 세션 토큰 생성 후 DB에 저장, 토큰 문자열 반환"""
+def create_session(username: str, remember: bool = True) -> str:
+    """새 세션 토큰 생성 후 DB에 저장, 토큰 문자열 반환
+    remember=True → 30일, remember=False → 8시간"""
     token = secrets.token_urlsafe(32)
-    expires_at = int(time.time()) + SESSION_MAX_DAYS * 86400
+    seconds = SESSION_MAX_DAYS * 86400 if remember else 28800
+    expires_at = int(time.time()) + seconds
     try:
         conn = get_conn()
         conn.execute(
