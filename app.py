@@ -1273,10 +1273,10 @@ elif page == 'rules':
     with tab3:
         sec("Anthropic API 키 설정")
         st.markdown("""
-        **API 키 발급 방법**
-        1. [console.anthropic.com](https://console.anthropic.com) 접속 및 회원가입
-        2. **API Keys** 메뉴 → **Create Key**
-        3. 생성된 키를 아래에 입력 후 저장
+        **Google Gemini API 키 발급 방법**
+        1. [aistudio.google.com](https://aistudio.google.com) 접속 (구글 계정으로 로그인)
+        2. 좌측 **Get API key** → **Create API key**
+        3. 생성된 키(`AIza`로 시작)를 아래에 입력 후 저장
         """)
 
         cur_key = load_api_key()
@@ -1288,12 +1288,12 @@ elif page == 'rules':
 
         new_key = st.text_input("API 키 입력", type="password", placeholder="sk-ant-api03-...", key="new_api_key")
         if st.button("저장", type="primary", key="save_api_key_btn"):
-            if new_key.startswith("sk-"):
+            if new_key.startswith("AIza") or new_key.startswith("sk-"):
                 save_api_key(new_key)
                 st.success("✅ API 키가 저장되었습니다. 페이지를 새로고침하면 AI 기능이 활성화됩니다.")
                 st.rerun()
             else:
-                st.error("올바른 API 키 형식이 아닙니다. 'sk-ant-' 로 시작해야 합니다.")
+                st.error("올바른 API 키 형식이 아닙니다. Google API 키는 'AIza'로 시작합니다.")
 
         if cur_key:
             st.divider()

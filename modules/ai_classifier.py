@@ -1,7 +1,7 @@
 """
-AI 분류 모듈 (Claude API 활용)
-- ai_classify_batch : 미분류 거래 일괄 분류 (아이디어 3)
-- ai_extract_keyword: 저장 시 핵심 키워드 추출 (아이디어 2)
+AI 분류 모듈 (Google Gemini API 활용)
+- ai_classify_batch : 미분류 거래 일괄 분류
+- ai_extract_keyword: 저장 시 핵심 키워드 추출
 - load_api_key / save_api_key : API 키 영구 저장
 """
 
@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).parent.parent / "data" / "settings.json"
-_MODEL = "claude-3-haiku-20240307"   # 빠르고 저렴한 모델
+_MODEL = "gemini-2.5-pro-preview-05-06"
 
 
 # ── 키 영구 저장 ──────────────────────────────────────────────
@@ -41,16 +41,24 @@ def save_api_key(key: str):
 
 # ── 내부 헬퍼 ────────────────────────────────────────────────
 
-def _client(api_key: str):
+def _get_model(api_key: str):
     try:
-        import anthropic
-        return anthropic.Anthropic(api_key=api_key)
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        return genai.GenerativeModel(_MODEL)
     except ImportError:
-        raise RuntimeError("anthropic 패키지가 설치되지 않았습니다. pip install anthropic")
+        raise RuntimeError("google-generativeai 패키지가 설치되지 않았습니다. pip install google-generativeai")
+
+
+def _generate(model, prompt: str) -> str:
+    response = model.generate_content(prompt)
+    return response.text.strip()
 
 
 def _parse_json(text: str, default):
     """응답 텍스트에서 JSON 추출"""
+    # 마크다운 코드블록 제거
+    text = re.sub(r"```(?:json)?", "", text).strip()
     for pat in [r'\[.*\]', r'\{.*\}']:
         m = re.search(pat, text, re.DOTALL)
         if m:
@@ -61,7 +69,7 @@ def _parse_json(text: str, default):
     return default
 
 
-# ── 아이디어 2: 저장 시 핵심 키워드 추출 ─────────────────────
+# ── 핵심 키워드 추출 (저장 시) ────────────────────────────────
 
 def ai_extract_keyword(description: str, counterpart: str,
                        branch: str, category: str, api_key: str) -> str:
@@ -72,7 +80,7 @@ def ai_extract_keyword(description: str, counterpart: str,
     if not api_key:
         return description
     try:
-        client = _client(api_key)
+        model = _get_model(api_key)
         prompt = (
             f"통장 거래 적요에서 다음 달에도 같은 거래를 인식할 수 있는 핵심 키워드를 추출해주세요.\n\n"
             f"적요: {description}\n"
@@ -82,36 +90,31 @@ def ai_extract_keyword(description: str, counterpart: str,
             f"- 날짜(YYYYMMDD, 26xx 등), 순번, 변동 숫자 제외\n"
             f"- 2~10글자의 고정 단어만\n"
             f"- 키워드 단어만 반환 (설명 없이)\n"
-            f"예시 입력: '2604국민건강보험' → 예시 출력: '국민건강보험'"
+            f"예시 입력: '2604국민건강보험' → 예시 출력: 국민건강보험"
         )
-        msg = client.messages.create(
-            model=_MODEL, max_tokens=30,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        keyword = msg.content[0].text.strip().split("\n")[0].strip()
-        # 안전 검사: 원본 적요 또는 상대방 이름에 포함된 경우만 채택
+        keyword = _generate(model, prompt).split("\n")[0].strip()
         if 2 <= len(keyword) <= 20 and (keyword in description or keyword in counterpart):
             return keyword
     except Exception as e:
         print(f"[AI keyword] {e}")
-    return description  # fallback
+    return description
 
 
-# ── 아이디어 3: 미분류 거래 일괄 AI 분류 ────────────────────
+# ── 미분류 거래 일괄 AI 분류 ─────────────────────────────────
 
 def ai_classify_batch(transactions: list[dict],
                       branch_list: list[str],
                       category_list: list[str],
                       api_key: str) -> list[dict]:
     """
-    ❓미분류 거래 목록을 Claude에 일괄 전송해 분류 결과 반환.
+    ❓미분류 거래 목록을 Gemini에 일괄 전송해 분류 결과 반환.
     반환: [{"id": int, "branch": str, "category": str, "confidence": float}, ...]
     """
     if not api_key or not transactions:
         return []
 
     results: list[dict] = []
-    chunk_size = 40  # 한 번에 보낼 최대 건수
+    chunk_size = 40
 
     for start in range(0, len(transactions), chunk_size):
         chunk = transactions[start:start + chunk_size]
@@ -135,20 +138,17 @@ def ai_classify_batch(transactions: list[dict],
             "- 지점을 특정할 수 없으면 branch: ''\n"
             "- confidence: 확신도 0.0~1.0\n\n"
             "거래 목록:\n" + "\n".join(lines) + "\n\n"
-            "반드시 JSON 배열만 반환 (다른 텍스트 없이):\n"
-            '[{"id":0,"branch":"지점명","category":"계정과목","confidence":0.9}, ...]'
+            "JSON 배열만 반환 (다른 텍스트, 마크다운 없이):\n"
+            '[{"id":0,"branch":"지점명","category":"계정과목","confidence":0.9}]'
         )
 
         try:
-            client = _client(api_key)
-            msg = client.messages.create(
-                model=_MODEL, max_tokens=2000,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            parsed = _parse_json(msg.content[0].text, [])
+            model = _get_model(api_key)
+            text  = _generate(model, prompt)
+            parsed = _parse_json(text, [])
             if isinstance(parsed, list):
                 for item in parsed:
-                    item["id"] = item.get("id", 0) + start  # 전체 인덱스로 보정
+                    item["id"] = item.get("id", 0) + start
                 results.extend(parsed)
         except Exception as e:
             print(f"[AI batch] chunk {start}: {e}")
