@@ -482,19 +482,21 @@ def get_all_bank_transactions(year: int, month: int, bank: str = None) -> pd.Dat
         return df
 
 
-def update_transaction_classification(tx_id: int, branch: str, category: str):
+def update_transaction_classification(tx_id: int, branch: str, category: str, source: str = "manual"):
     conn = get_conn()
     c = conn.cursor()
 
+    is_excluded = 1 if category == "제외" else 0
+
     if USE_POSTGRES:
         c.execute(
-            "UPDATE bank_transactions SET branch=%s, category=%s, needs_review=0 WHERE id=%s",
-            (branch, category, tx_id)
+            "UPDATE bank_transactions SET branch=%s, category=%s, needs_review=0, is_excluded=%s, classification_source=%s WHERE id=%s",
+            (branch, category, is_excluded, source, tx_id)
         )
     else:
         c.execute(
-            "UPDATE bank_transactions SET branch=?, category=?, needs_review=0 WHERE id=?",
-            (branch, category, tx_id)
+            "UPDATE bank_transactions SET branch=?, category=?, needs_review=0, is_excluded=?, classification_source=? WHERE id=?",
+            (branch, category, is_excluded, source, tx_id)
         )
 
     conn.commit()
