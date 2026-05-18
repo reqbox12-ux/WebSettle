@@ -135,10 +135,10 @@ button[data-testid="collapsedControl"]{display:none!important}
 .kpi{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);
   padding:18px 20px;box-shadow:var(--sh)}
 .kpi-lbl{font-size:10.5px;color:var(--ink3);font-weight:600;letter-spacing:.05em;text-transform:uppercase}
-.kpi-val{font-size:22px;font-weight:700;letter-spacing:-.025em;margin-top:8px;
-  font-feature-settings:'tnum' 1;line-height:1.1;display:flex;align-items:baseline;gap:4px}
-.kpi-unit{font-size:12px;font-weight:400;color:var(--ink3)}
-.kpi-sub{font-size:11px;color:var(--ink3);margin-top:5px}
+.kpi-val{font-size:clamp(17px,2.1vw,30px);font-weight:800;letter-spacing:-.03em;margin-top:10px;
+  font-feature-settings:'tnum' 1;line-height:1.05;display:flex;align-items:baseline;gap:4px}
+.kpi-unit{font-size:clamp(11px,1vw,15px);font-weight:500;color:var(--ink3)}
+.kpi-sub{font-size:clamp(9px,0.8vw,11px);color:var(--ink3);margin-top:6px}
 .c-ink{color:var(--ink)} .c-red{color:var(--red)} .c-pos{color:var(--pos)}
 .c-warn{color:var(--warn)} .c-info{color:var(--info)}
 
@@ -276,6 +276,7 @@ for k, v in [('year', 2026), ('month', 4), ('sel_br', '전체'), ('drill', None)
 #  SVG icons
 # ══════════════════════════════════════════════════════════════════════
 I_DASH   = '<svg viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>'
+I_BRANCH = '<svg viewBox="0 0 24 24"><path d="M20 7H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2z"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>'
 I_UP     = '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>'
 I_RULE   = '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/></svg>'
 I_PDF    = '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><polyline points="14 2 14 8 20 8"/><line x1="8" y1="13" x2="16" y2="13"/><line x1="8" y1="17" x2="16" y2="17"/><line x1="10" y1="9" x2="10" y2="9"/></svg>'
@@ -388,7 +389,7 @@ def build_summary(year, month):
 # ══════════════════════════════════════════════════════════════════════
 def render_sidebar():
     logo_h = get_logo_html(mobile=False)
-    items = [('dashboard','대시보드',I_DASH),('upload','데이터 업로드',I_UP),('rules','규칙 관리',I_RULE)]
+    items = [('dashboard','대시보드',I_DASH),('branch','지점 상세',I_BRANCH),('upload','데이터 업로드',I_UP),('rules','규칙 관리',I_RULE)]
     nav = ""
     for p, lbl, ic in items:
         cls = 'on' if page == p else ''
@@ -406,7 +407,7 @@ def render_sidebar():
 #  Bottom nav (mobile)
 # ══════════════════════════════════════════════════════════════════════
 def render_bnav():
-    items = [('dashboard','대시보드',I_DASH),('upload','업로드',I_UP),('rules','규칙',I_RULE)]
+    items = [('dashboard','대시보드',I_DASH),('branch','지점',I_BRANCH),('upload','업로드',I_UP),('rules','규칙',I_RULE)]
     h = '<div class="bnav">'
     for p, lbl, ic in items:
         cls = 'on' if page == p else ''
@@ -560,24 +561,51 @@ def render_chart(df, key="ch"):
     fig.update_layout(**layout)
     st.plotly_chart(fig, use_container_width=True, key=key)
 
-def render_rank_chart(df, key="rk"):
-    dr = df[df["총매출"]>0].sort_values("손익", ascending=True)
-    if dr.empty: return
-    colors = ["#E60028" if v<0 else "#2E7D5B" for v in dr.손익]
-    _tf = dict(size=11, color="#1F1B1B", family="Pretendard Variable,sans-serif")
-    fig = go.Figure(go.Bar(x=dr.손익, y=dr.branch, orientation="h",
-        marker_color=colors, opacity=0.85,
-        text=dr.손익.apply(lambda v: f"{v:+,.0f}"), textposition="outside",
-        textfont=dict(size=10, color="#1F1B1B", family="Pretendard Variable,sans-serif")))
-    layout = {**PLOT_BASE, "height": max(320, len(dr)*34),
-        "xaxis": dict(tickformat=",", zeroline=True, zerolinecolor="rgba(31,27,27,.25)",
-                      zerolinewidth=1.5, gridcolor="rgba(31,27,27,.07)",
-                      tickfont=_tf, color="#1F1B1B"),
-        "yaxis": dict(tickfont=dict(size=12, color="#1F1B1B",
-                      family="Pretendard Variable,sans-serif"), color="#1F1B1B"),
-        "margin": dict(t=16, b=20, l=10, r=100)}
-    fig.update_layout(**layout)
-    st.plotly_chart(fig, use_container_width=True, key=key)
+def render_rank_cards(df):
+    active = df[df["총매출"] > 0].sort_values("손익", ascending=False)
+    if active.empty:
+        st.info("데이터 없음")
+        return
+    top3    = active.head(3)
+    bottom3 = active.tail(3).sort_values("손익")
+
+    def card_row(row, rank, is_top):
+        pnl  = int(row["손익"])
+        rate = row["이익률"]
+        sign = "▲" if pnl >= 0 else "▼"
+        if is_top:
+            pnl_col  = "var(--pos)";  bg = "var(--poss)"; rate_col = "var(--pos)"
+        else:
+            pnl_col  = "var(--red)";  bg = "var(--reds)"; rate_col = "var(--red)"
+        rate_sign = "+" if rate >= 0 else ""
+        return f"""
+        <div style="display:flex;align-items:center;justify-content:space-between;
+          padding:10px 14px;border-radius:var(--rs);background:{bg};margin-bottom:6px">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span style="font-size:12px;font-weight:800;color:{pnl_col};
+              width:18px;text-align:center">{rank}</span>
+            <span style="font-size:13px;font-weight:600;color:var(--ink)">{row['branch']}</span>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px;font-weight:700;color:{pnl_col}">
+              {sign} {fw(abs(pnl))}</div>
+            <div style="font-size:11px;font-weight:600;color:{rate_col}">
+              {rate_sign}{rate:.1f}%</div>
+          </div>
+        </div>"""
+
+    html = '<div style="display:flex;flex-direction:column;gap:16px">'
+    # 상위 3
+    html += '<div><div style="font-size:10px;font-weight:700;color:var(--pos);letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px">🏆 흑자 TOP 3</div>'
+    for i, (_, row) in enumerate(top3.iterrows()):
+        html += card_row(row, i+1, True)
+    html += '</div>'
+    # 하위 3
+    html += '<div><div style="font-size:10px;font-weight:700;color:var(--red);letter-spacing:.07em;text-transform:uppercase;margin-bottom:8px">⚠️ 적자 BOTTOM 3</div>'
+    for i, (_, row) in enumerate(bottom3.iterrows()):
+        html += card_row(row, i+1, False)
+    html += '</div></div>'
+    st.markdown(html, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════
 #  PDF generator (HTML)
@@ -754,6 +782,7 @@ if page == 'dashboard':
         int_cols_det = [c for c in disp.columns if c not in ("지점","이익률(%)")]
         for c in int_cols_det:
             disp[c] = disp[c].apply(lambda v: f"{int(v):,}" if pd.notna(v) else "0")
+        disp["이익률(%)"] = disp["이익률(%)"].apply(lambda v: f"{float(v):.1f}%" if pd.notna(v) else "0%")
 
         st.dataframe(
             disp.style
@@ -819,45 +848,122 @@ if page == 'dashboard':
         render_chart(view_df, key="ch_main")
         st.markdown('</div>', unsafe_allow_html=True)
     with col_ch2:
-        st.markdown('<div class="ch"><div class="ch-t">손익 순위</div><div class="ch-s">손익 기준 정렬</div>', unsafe_allow_html=True)
-        render_rank_chart(view_df, key="ch_rank")
+        st.markdown('<div class="ch"><div class="ch-t">손익 순위</div><div class="ch-s">흑자 TOP3 · 적자 BOTTOM3</div>', unsafe_allow_html=True)
+        render_rank_cards(view_df)
         st.markdown('</div>', unsafe_allow_html=True)
 
     # PDF Section
     sec("정산서 내보내기")
-    st.markdown('<div class="pdf-box"><div class="pdf-t">📄 정산서 다운로드</div>', unsafe_allow_html=True)
-    st.caption("인쇄할 지점을 선택하세요. 다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장")
 
-    p_col1, p_col2 = st.columns([3, 1])
-    with p_col1:
-        chk_all = st.checkbox("전체 지점 선택", value=True, key="pdf_all")
-        if chk_all:
-            pdf_branches = view_df[view_df.총매출>0].branch.tolist()
+    # 지점 선택 (카드 바깥)
+    chk_all = st.checkbox("전체 지점 선택", value=True, key="pdf_all")
+    if chk_all:
+        pdf_branches = view_df[view_df.총매출>0].branch.tolist()
+    else:
+        available = view_df[view_df.총매출>0].branch.tolist()
+        rows_c = [st.columns(4) for _ in range((len(available)+3)//4)]
+        flat   = [c for row_c in rows_c for c in row_c]
+        pdf_branches = [b for b, col in zip(available, flat) if col.checkbox(b, value=True, key=f"pdf_{b}")]
+
+    st.caption("다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장")
+
+    # 카드: PC=가로 한 줄, 모바일=세로
+    st.markdown('<div class="pdf-box">', unsafe_allow_html=True)
+    pc1, pc2, pc3 = st.columns([2, 1, 1])
+    with pc1:
+        st.markdown('<div class="pdf-t" style="padding-top:6px">📄 정산서 다운로드</div>', unsafe_allow_html=True)
+    with pc2:
+        # 미리 생성
+        if pdf_branches:
+            exp_df_pdf  = c_exp(year, month)
+            html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
         else:
-            available = view_df[view_df.총매출>0].branch.tolist()
-            rows_c = [st.columns(4) for _ in range((len(available)+3)//4)]
-            flat = [c for row in rows_c for c in row]
-            pdf_branches = [b for b, col in zip(available, flat) if col.checkbox(b, value=True, key=f"pdf_{b}")]
-
-    with p_col2:
-        st.markdown('<div style="height:28px"></div>', unsafe_allow_html=True)
-        if st.button("HTML 정산서 다운로드", type="primary", use_container_width=True):
-            if pdf_branches:
-                exp_df_pdf = c_exp(year, month)
-                html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
-                st.download_button(
-                    "⬇️ 다운로드 시작",
-                    html_content.encode("utf-8"),
-                    f"정산보고서_{year}년{month}월.html",
-                    "text/html",
-                    key="dl_btn"
-                )
-            else:
-                st.error("지점을 하나 이상 선택하세요.")
+            html_content = ""
+        st.download_button(
+            "정산서 다운로드",
+            html_content.encode("utf-8") if html_content else b"",
+            f"정산보고서_{year}년{month}월.html",
+            "text/html",
+            type="primary",
+            use_container_width=True,
+            key="pdf_dl1",
+            disabled=not bool(html_content),
+        )
+    with pc3:
+        st.download_button(
+            "⬇️ 다운로드 시작",
+            html_content.encode("utf-8") if html_content else b"",
+            f"정산보고서_{year}년{month}월.html",
+            "text/html",
+            use_container_width=True,
+            key="pdf_dl2",
+            disabled=not bool(html_content),
+        )
     st.markdown('</div>', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════
-#  2. UPLOAD
+#  2. BRANCH DETAIL
+# ══════════════════════════════════════════════════════════════════════
+elif page == 'branch':
+    year  = st.session_state.year
+    month = st.session_state.month
+
+    st.markdown('<div class="ph"><div class="ph-title">지점 상세 내역</div><div class="ph-sub">지점을 선택하면 매출·지출 상세 내역을 확인합니다</div></div>', unsafe_allow_html=True)
+
+    # 필터
+    st.markdown('<div class="filter-wrap">', unsafe_allow_html=True)
+    fc1, fc2, fc3 = st.columns([1, 1, 2])
+    yrs   = [2026, 2025]
+    year  = fc1.selectbox("연도", yrs, index=yrs.index(year) if year in yrs else 0, key="br_yr")
+    month = fc2.selectbox("월", list(range(1,13)), index=month-1, key="br_mn", format_func=lambda m: f"{m}월")
+    br_sel = fc3.selectbox("지점 선택", BRANCH_LIST, key="br_sel")
+    st.session_state.year  = year
+    st.session_state.month = month
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    with st.spinner("데이터 로드 중..."):
+        full_df = build_summary(year, month)
+
+    br_row = full_df[full_df.branch == br_sel]
+    if br_row.empty or br_row.iloc[0]["총매출"] == 0:
+        st.markdown('<div class="al al-warn">⚠️&nbsp; 해당 지점의 데이터가 없습니다.</div>', unsafe_allow_html=True)
+    else:
+        render_detail(br_row.iloc[0], year, month)
+
+        # 월별 추이 차트
+        sec("월별 손익 추이")
+        months_data = []
+        for m in range(1, 13):
+            r = build_summary(year, m)
+            row = r[r.branch == br_sel]
+            if not row.empty:
+                months_data.append({"월": f"{m}월", "총매출": row.iloc[0]["총매출"],
+                                    "총지출": row.iloc[0]["총지출"], "손익": row.iloc[0]["손익"]})
+            else:
+                months_data.append({"월": f"{m}월", "총매출": 0, "총지출": 0, "손익": 0})
+        mdf = pd.DataFrame(months_data)
+        fig_br = go.Figure()
+        fig_br.add_trace(go.Bar(name="총매출", x=mdf["월"], y=mdf["총매출"],
+            marker_color="#3D3835", opacity=0.8))
+        fig_br.add_trace(go.Bar(name="총지출", x=mdf["월"], y=mdf["총지출"],
+            marker_color="#E60028", opacity=0.75))
+        fig_br.add_trace(go.Scatter(name="손익", x=mdf["월"], y=mdf["손익"],
+            mode="lines+markers", yaxis="y2",
+            line=dict(color="#2E7D5B", width=2.5),
+            marker=dict(size=8, color=["#2E7D5B" if v>=0 else "#E60028" for v in mdf["손익"]],
+                        line=dict(width=2, color="white"))))
+        fig_br.update_layout(**{**PLOT_BASE, "barmode":"group", "height":320,
+            "yaxis":  dict(tickformat=",", gridcolor="rgba(31,27,27,.08)", zeroline=False),
+            "yaxis2": dict(overlaying="y", side="right", tickformat=",",
+                           zeroline=True, zerolinecolor="rgba(31,27,27,.2)"),
+            "xaxis":  dict(tickfont=dict(size=11))})
+        st.plotly_chart(fig_br, use_container_width=True)
+
+# ══════════════════════════════════════════════════════════════════════
+#  3. UPLOAD
+# ══════════════════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════════════
+#  4. UPLOAD  (formerly 2)
 # ══════════════════════════════════════════════════════════════════════
 elif page == 'upload':
     st.markdown('<div class="ph"><div class="ph-title">데이터 업로드</div><div class="ph-sub">엑셀 파일을 업로드하면 자동으로 파싱·저장됩니다</div></div>', unsafe_allow_html=True)
