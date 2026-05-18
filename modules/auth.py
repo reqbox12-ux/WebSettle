@@ -1,10 +1,62 @@
 """
-인증 모듈 — SQLite 기반 사용자 관리 + bcrypt 암호화
+인증 모듈 — SQLite 기반 사용자 관리 + bcrypt 암호화 + HMAC 세션 토큰
 기본 관리자: admin / Admin1234!
 """
 
 import bcrypt
+import hmac
+import hashlib
+import time
+import secrets
+import json
+from pathlib import Path
 from modules.db import get_conn
+
+SETTINGS_PATH = Path(__file__).parent.parent / "data" / "settings.json"
+TOKEN_COOKIE   = "ws_auth_token"
+TOKEN_MAX_DAYS = 30
+
+
+# ── 시크릿 키 (자동 생성, settings.json에 저장) ─────────────────
+
+def _get_secret() -> str:
+    data: dict = {}
+    if SETTINGS_PATH.exists():
+        try:
+            with open(SETTINGS_PATH, encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            pass
+    if "secret_key" not in data:
+        data["secret_key"] = secrets.token_hex(32)
+        SETTINGS_PATH.parent.mkdir(exist_ok=True)
+        with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    return data["secret_key"]
+
+
+# ── 세션 토큰 생성 / 검증 ────────────────────────────────────────
+
+def make_token(username: str) -> str:
+    secret = _get_secret()
+    ts  = str(int(time.time()))
+    sig = hmac.new(secret.encode(), f"{username}:{ts}".encode(), hashlib.sha256).hexdigest()
+    return f"{username}:{ts}:{sig}"
+
+
+def validate_token(token: str) -> str | None:
+    """유효한 토큰이면 username 반환, 만료·위조면 None"""
+    try:
+        username, ts, sig = token.split(":", 2)
+        if int(time.time()) - int(ts) > TOKEN_MAX_DAYS * 86400:
+            return None
+        secret   = _get_secret()
+        expected = hmac.new(secret.encode(), f"{username}:{ts}".encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, expected):
+            return username
+    except Exception:
+        pass
+    return None
 
 
 # ── 테이블 초기화 ─────────────────────────────────────────────
@@ -24,8 +76,6 @@ def init_users_table():
         )
     """)
     conn.commit()
-
-    # 기본 admin 계정 없으면 생성
     row = conn.execute("SELECT id FROM users WHERE username='admin'").fetchone()
     if not row:
         pw_hash = bcrypt.hashpw("Admin1234!".encode(), bcrypt.gensalt()).decode()
@@ -40,19 +90,25 @@ def init_users_table():
 # ── 로그인 검증 ───────────────────────────────────────────────
 
 def verify_login(username: str, password: str) -> dict | None:
-    """
-    로그인 성공 시 {"username":..., "name":..., "role":...} 반환
-    실패 시 None
-    """
     conn = get_conn()
     row = conn.execute(
         "SELECT username, name, password, role FROM users WHERE username=?",
         (username.strip(),)
     ).fetchone()
     conn.close()
-
     if row and bcrypt.checkpw(password.encode(), row[2].encode()):
         return {"username": row[0], "name": row[1], "role": row[3]}
+    return None
+
+
+def get_user_by_username(username: str) -> dict | None:
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT username, name, role FROM users WHERE username=?", (username,)
+    ).fetchone()
+    conn.close()
+    if row:
+        return {"username": row[0], "name": row[1], "role": row[2]}
     return None
 
 
@@ -68,7 +124,6 @@ def get_all_users() -> list[dict]:
 
 
 def add_user(username: str, name: str, password: str, role: str = "user") -> bool:
-    """추가 성공 True, 중복 False"""
     try:
         pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
         conn = get_conn()

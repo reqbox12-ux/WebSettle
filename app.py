@@ -23,9 +23,11 @@ from modules.parser import (
 )
 from modules.classifier import classify_transactions, add_rule
 from modules.auth import (
-    init_users_table, verify_login,
+    init_users_table, verify_login, get_user_by_username,
     get_all_users, add_user, delete_user, change_password,
+    make_token, validate_token, TOKEN_COOKIE,
 )
+import extra_streamlit_components as stx
 from modules.ai_classifier import (
     load_api_key, save_api_key,
     ai_classify_batch, ai_extract_keyword,
@@ -276,44 +278,54 @@ init_db()
 load_keyword_rules()
 init_users_table()
 
+# ── 쿠키 매니저 (로그인 유지용) ──────────────────────────────
+@st.cache_resource
+def _get_cookie_mgr():
+    return stx.CookieManager(key="laon_ws")
+
+_cookie_mgr = _get_cookie_mgr()
+
 # ══════════════════════════════════════════════════════════════════════
 #  로그인 페이지
 # ══════════════════════════════════════════════════════════════════════
 def _show_login():
-    st.markdown("""
-    <style>
+    st.markdown("""<style>
     #MainMenu,header,footer{visibility:hidden}
-    .login-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:0}
-    .login-card{background:#fff;border-radius:20px;box-shadow:0 4px 32px rgba(31,27,27,.12);padding:48px 40px 40px;width:100%;max-width:400px}
-    .login-logo{text-align:center;margin-bottom:32px}
-    .login-title{font-size:22px;font-weight:700;color:#1F1B1B;margin-bottom:4px;text-align:center}
-    .login-sub{font-size:13px;color:#9A918C;text-align:center;margin-bottom:28px}
-    </style>
-    """, unsafe_allow_html=True)
+    .login-title{font-size:24px;font-weight:700;color:#1F1B1B;margin-bottom:4px;text-align:center}
+    .login-sub{font-size:13px;color:#9A918C;text-align:center;margin-bottom:24px}
+    </style>""", unsafe_allow_html=True)
 
-    logo_svg = """<svg width="100" height="36" viewBox="0 0 260 80" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <text x="0" y="62" font-family="Arial Black,Arial" font-weight="900" font-size="72" fill="#E60028">LAON</text>
-    </svg>"""
-
-    col = st.columns([1, 2, 1])[1]
+    st.markdown("<div style='height:10vh'></div>", unsafe_allow_html=True)
+    col = st.columns([1, 1, 1])[1]
     with col:
-        st.markdown(f'<div class="login-logo">{logo_svg}</div>', unsafe_allow_html=True)
+        st.markdown('<div style="text-align:center;font-size:36px;font-weight:900;color:#E60028;letter-spacing:-1px">LAON</div>', unsafe_allow_html=True)
         st.markdown('<div class="login-title">WebSettle</div>', unsafe_allow_html=True)
         st.markdown('<div class="login-sub">라온스포츠 정산 시스템</div>', unsafe_allow_html=True)
-
         username = st.text_input("아이디", placeholder="아이디를 입력하세요", key="login_user")
         password = st.text_input("비밀번호", type="password", placeholder="비밀번호를 입력하세요", key="login_pw")
-
         if st.button("로그인", type="primary", use_container_width=True, key="login_btn"):
             user = verify_login(username, password)
             if user:
+                token = make_token(user["username"])
+                _cookie_mgr.set(TOKEN_COOKIE, token, max_age=30 * 24 * 3600)  # 30일
                 st.session_state.authenticated = True
                 st.session_state.auth_user     = user
                 st.rerun()
             else:
                 st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
 
-# ── 인증 체크 ─────────────────────────────────────────────────
+# ── 인증 체크 (session_state → 쿠키 순서로 확인) ─────────────
+if not st.session_state.get("authenticated", False):
+    # 쿠키에 토큰이 있으면 자동 로그인
+    _token = _cookie_mgr.get(TOKEN_COOKIE)
+    if _token:
+        _uname = validate_token(_token)
+        if _uname:
+            _user = get_user_by_username(_uname)
+            if _user:
+                st.session_state.authenticated = True
+                st.session_state.auth_user     = _user
+
 if not st.session_state.get("authenticated", False):
     _show_login()
     st.stop()
@@ -478,6 +490,7 @@ def render_sidebar():
     # 로그아웃 버튼 (Streamlit 네이티브)
     st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
     if st.button("🚪 로그아웃", use_container_width=True, key="logout_btn"):
+        _cookie_mgr.delete(TOKEN_COOKIE)
         st.session_state.authenticated = False
         st.session_state.auth_user     = {}
         st.rerun()
