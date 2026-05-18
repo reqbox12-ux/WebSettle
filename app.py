@@ -822,24 +822,6 @@ if page == 'dashboard':
         table_html += '</tbody></table></div>'
         st.markdown(table_html, unsafe_allow_html=True)
 
-        # Drill-down buttons
-        sec("지점 상세 보기")
-        btn_cols = st.columns(min(len(view_df), 8))
-        for i, (_, row) in enumerate(view_df.iterrows()):
-            b = row.branch
-            col_i = i % 8
-            is_sel = st.session_state.drill == b
-            with btn_cols[col_i]:
-                if st.button(b, key=f"dr_{b}", type="primary" if is_sel else "secondary", use_container_width=True):
-                    st.session_state.drill = None if is_sel else b
-                    st.rerun()
-
-        # Detail panel
-        if st.session_state.drill:
-            drill_row = full_df[full_df.branch == st.session_state.drill]
-            if not drill_row.empty:
-                render_detail(drill_row.iloc[0], year, month)
-
     # Charts
     sec("지점별 매출 · 지출 · 손익")
     col_ch1, col_ch2 = st.columns([3, 2])
@@ -865,20 +847,19 @@ if page == 'dashboard':
         flat   = [c for row_c in rows_c for c in row_c]
         pdf_branches = [b for b, col in zip(available, flat) if col.checkbox(b, value=True, key=f"pdf_{b}")]
 
-    st.caption("다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장")
+    # 카드 안에 타이틀 + 버튼 (PC: 가로, 모바일: 세로)
+    if pdf_branches:
+        exp_df_pdf   = c_exp(year, month)
+        html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
+    else:
+        html_content = ""
 
-    # 카드: PC=가로 한 줄, 모바일=세로
     st.markdown('<div class="pdf-box">', unsafe_allow_html=True)
-    pc1, pc2, pc3 = st.columns([2, 1, 1])
+    pc1, pc2 = st.columns([2, 1])
     with pc1:
         st.markdown('<div class="pdf-t" style="padding-top:6px">📄 정산서 다운로드</div>', unsafe_allow_html=True)
+        st.caption("다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장")
     with pc2:
-        # 미리 생성
-        if pdf_branches:
-            exp_df_pdf  = c_exp(year, month)
-            html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
-        else:
-            html_content = ""
         st.download_button(
             "정산서 다운로드",
             html_content.encode("utf-8") if html_content else b"",
@@ -887,16 +868,6 @@ if page == 'dashboard':
             type="primary",
             use_container_width=True,
             key="pdf_dl1",
-            disabled=not bool(html_content),
-        )
-    with pc3:
-        st.download_button(
-            "⬇️ 다운로드 시작",
-            html_content.encode("utf-8") if html_content else b"",
-            f"정산보고서_{year}년{month}월.html",
-            "text/html",
-            use_container_width=True,
-            key="pdf_dl2",
             disabled=not bool(html_content),
         )
     st.markdown('</div>', unsafe_allow_html=True)
