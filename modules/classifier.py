@@ -22,7 +22,10 @@ def classify_transactions(df: pd.DataFrame, bank: str) -> pd.DataFrame:
     rules = _get_rules(bank)
 
     for idx, row in df.iterrows():
-        if pd.notna(row.get("branch")) and pd.notna(row.get("category")):
+        # branch와 category 모두 비어있지 않을 때만 스킵 (빈 문자열은 미분류로 처리)
+        branch_filled = bool(str(row.get("branch", "")).strip())
+        cat_filled    = bool(str(row.get("category", "")).strip())
+        if branch_filled and cat_filled:
             continue  # 이미 분류됨
 
         keyword_col = "description"
