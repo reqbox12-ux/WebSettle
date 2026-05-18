@@ -977,6 +977,34 @@ elif page == 'upload':
         bm = c2.selectbox("월", list(range(1,13)), index=3, key="bm", format_func=lambda m: f"{m}월")
         st.caption("💡 하나통장(여러 시트)과 신한통장이 합쳐진 파일을 그대로 업로드하세요. 자동으로 감지합니다.")
         fb = st.file_uploader("통장내역.xlsx", type=["xlsx"], key="bank")
+
+        # ── 파일 올라오면 시트 구조 즉시 표시 (저장 전 확인용) ──
+        if fb:
+            _xl_check = pd.ExcelFile(fb)
+            with st.expander(f"📋 파일 구조 확인 ({len(_xl_check.sheet_names)}개 시트)", expanded=True):
+                for _sn in _xl_check.sheet_names:
+                    try:
+                        _raw = _xl_check.parse(_sn, header=None, nrows=4, dtype=str)
+                        # 헤더 후보 행 출력
+                        _hrow = 0
+                        for _ri, _row in _raw.iterrows():
+                            _vals = [str(v).strip() for v in _row if pd.notna(v) and str(v).strip() not in ("nan","")]
+                            if "No" in _vals:
+                                _hrow = _ri
+                                break
+                        _headers = [str(v).strip() for v in _raw.iloc[_hrow] if pd.notna(v) and str(v).strip() not in ("nan","")]
+                        # 판별 결과
+                        if any("전체선택" in v for v in _headers):
+                            _kind = "🟦 신한통장"
+                        elif any("의뢰인" in v or "수취인" in v for v in _headers):
+                            _kind = "🟩 하나통장"
+                        else:
+                            _kind = "❓ 미감지"
+                        st.markdown(f"**{_sn}** → {_kind}")
+                        st.caption("헤더: " + " | ".join(_headers[:10]))
+                    except Exception as _e:
+                        st.caption(f"{_sn}: 읽기 실패 ({_e})")
+
         if fb and st.button("저장", type="primary", key="b_bank"):
             with st.spinner("시트 자동 감지 및 분류 중..."):
                 xl = pd.ExcelFile(fb)
