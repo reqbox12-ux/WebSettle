@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import json, base64
 import tempfile, os
@@ -56,6 +57,7 @@ st.markdown("""
 <style>
 @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css');
 
+/* ═══ LIGHT MODE (기본) ═══════════════════════════════════════ */
 :root {
   --red:#E60028; --reds:#FFE9EC; --redd:#C00022;
   --bg:#FAF7F5; --sf:#FFFFFF; --sf2:#F3EFEB; --sf3:#ECE7E2;
@@ -67,6 +69,33 @@ st.markdown("""
   --sh:0 1px 3px rgba(31,27,27,.06),0 1px 2px rgba(31,27,27,.04);
   --shm:0 4px 20px rgba(31,27,27,.10);
   --r:14px; --rs:10px;
+  --chart-ink:#1F1B1B;
+}
+
+/* ═══ DARK MODE 변수 정의 ════════════════════════════════════ */
+/* 시스템이 다크일 때 (사용자가 라이트로 고정하지 않은 경우) */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:#161210; --sf:#1E1A18; --sf2:#272220; --sf3:#302B28;
+    --ink:#EDE8E5; --ink2:#AEA69F; --ink3:#6A6158; --ink4:#3E3835;
+    --bd:rgba(237,232,229,.08); --bds:rgba(237,232,229,.15);
+    --reds:rgba(230,0,40,.20); --poss:rgba(46,125,91,.20);
+    --warns:rgba(184,110,31,.20); --infos:rgba(57,99,168,.20);
+    --sh:0 1px 4px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.25);
+    --shm:0 6px 24px rgba(0,0,0,.50);
+    --chart-ink:#EDE8E5;
+  }
+}
+/* 사용자가 다크로 직접 고정한 경우 */
+[data-theme="dark"] {
+  --bg:#161210; --sf:#1E1A18; --sf2:#272220; --sf3:#302B28;
+  --ink:#EDE8E5; --ink2:#AEA69F; --ink3:#6A6158; --ink4:#3E3835;
+  --bd:rgba(237,232,229,.08); --bds:rgba(237,232,229,.15);
+  --reds:rgba(230,0,40,.20); --poss:rgba(46,125,91,.20);
+  --warns:rgba(184,110,31,.20); --infos:rgba(57,99,168,.20);
+  --sh:0 1px 4px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.25);
+  --shm:0 6px 24px rgba(0,0,0,.50);
+  --chart-ink:#EDE8E5;
 }
 *{box-sizing:border-box}
 html,body,[class*="css"]{
@@ -253,6 +282,58 @@ button[data-testid="collapsedControl"]{display:none!important}
 [data-testid="stRadio"] span{color:var(--ink)!important}
 [data-testid="stRadio"] label{color:var(--ink)!important}
 
+/* ═══ DARK MODE 위젯 오버라이드 ══════════════════════════════ */
+/* Streamlit select / input */
+[data-theme="dark"] [data-baseweb="select"]>div:first-child,
+[data-theme="dark"] [data-baseweb="select"] [data-baseweb="popover"],
+[data-theme="dark"] [data-baseweb="menu"]{
+  background:var(--sf2)!important;color:var(--ink)!important;border-color:var(--bds)!important}
+[data-theme="dark"] [data-baseweb="select"] *,[data-theme="dark"] [data-baseweb="select"] option{color:var(--ink)!important}
+[data-theme="dark"] [data-baseweb="input"]>div{background:var(--sf2)!important;border-color:var(--bds)!important}
+[data-theme="dark"] [data-baseweb="input"] input{color:var(--ink)!important}
+[data-theme="dark"] [data-baseweb="textarea"] textarea{background:var(--sf2)!important;color:var(--ink)!important}
+/* tabs */
+[data-theme="dark"] [data-testid="stTabs"] [data-baseweb="tab-list"]{border-bottom-color:var(--bd)!important}
+[data-theme="dark"] [data-testid="stTabs"] [data-baseweb="tab"]{color:var(--ink3)!important}
+[data-theme="dark"] [data-testid="stTabs"] [aria-selected="true"]{color:var(--ink)!important}
+/* expander */
+[data-theme="dark"] [data-testid="stExpander"]{background:var(--sf)!important;border-color:var(--bd)!important}
+[data-theme="dark"] [data-testid="stExpander"] summary{color:var(--ink)!important}
+/* dataframe */
+[data-theme="dark"] [data-testid="stDataFrame"]{border-color:var(--bd)!important}
+/* secondary button */
+[data-theme="dark"] .stButton>button[kind="secondary"]{background:var(--sf2)!important;color:var(--ink)!important;border:1px solid var(--bd)!important}
+/* number input */
+[data-theme="dark"] [data-testid="stNumberInput"] input{background:var(--sf2)!important;color:var(--ink)!important}
+/* labels & text */
+[data-theme="dark"] label,[data-theme="dark"] p,[data-theme="dark"] span:not(.bdg):not(.kpi-unit):not(.sec-t){color:var(--ink)}
+[data-theme="dark"] [data-testid="stMarkdownContainer"] p{color:var(--ink)!important}
+/* system 다크 동일 적용 */
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) [data-baseweb="select"]>div:first-child{background:var(--sf2)!important;color:var(--ink)!important}
+  :root:not([data-theme="light"]) [data-baseweb="input"]>div{background:var(--sf2)!important}
+  :root:not([data-theme="light"]) [data-baseweb="input"] input{color:var(--ink)!important}
+  :root:not([data-theme="light"]) .stButton>button[kind="secondary"]{background:var(--sf2)!important;color:var(--ink)!important}
+}
+
+/* ═══ PLOTLY 차트 다크 적응 ══════════════════════════════════ */
+[data-theme="dark"] .stPlotlyChart svg text,
+[data-theme="dark"] .js-plotly-plot svg text{fill:var(--ink)!important}
+[data-theme="dark"] .stPlotlyChart .gridlayer path{stroke:rgba(237,232,229,.08)!important}
+@media(prefers-color-scheme:dark){
+  :root:not([data-theme="light"]) .stPlotlyChart svg text{fill:#EDE8E5!important}
+  :root:not([data-theme="light"]) .stPlotlyChart .gridlayer path{stroke:rgba(237,232,229,.08)!important}
+}
+
+/* ═══ 테마 토글 버튼 ═════════════════════════════════════════ */
+.sb-foot{padding:12px 12px 24px;border-top:1px solid var(--bd);margin-top:auto}
+.theme-btn{width:100%;padding:9px 12px;background:var(--sf2);border:1px solid var(--bd);
+  border-radius:var(--rs);color:var(--ink2);font-size:13px;font-weight:500;cursor:pointer;
+  display:flex;align-items:center;gap:9px;transition:background .15s,color .15s;
+  letter-spacing:-.01em;text-decoration:none}
+.theme-btn:hover{background:var(--sf3);color:var(--ink)}
+.theme-btn svg{flex-shrink:0;stroke:currentColor}
+
 /* ── Mobile ─────────────────────────────────── */
 @media(max-width:767px){
   .c-sb{display:none!important}
@@ -272,6 +353,8 @@ button[data-testid="collapsedControl"]{display:none!important}
 }
 </style>
 """, unsafe_allow_html=True)
+
+# (테마는 URL ?theme= 파라미터 + Python CSS 주입으로 처리 — JS 불필요)
 
 init_db()
 load_keyword_rules()
@@ -356,6 +439,41 @@ for k, v in [('year', _now.year), ('month', _now.month), ('sel_br', '전체'), (
         st.session_state[k] = v
 
 _api_key = load_api_key()   # Anthropic API 키 (없으면 빈 문자열)
+
+# ── 테마 설정 (URL ?theme= 파라미터 → session_state 저장) ────
+_theme_param = st.query_params.get('theme', None)
+if _theme_param in ('dark', 'light'):
+    st.session_state['theme'] = _theme_param
+_theme = st.session_state.get('theme', 'auto')   # 'auto'|'dark'|'light'
+
+# 수동 설정된 경우만 CSS 오버라이드 주입
+if _theme == 'dark':
+    st.markdown("""<style>
+    :root{
+      --bg:#161210!important;--sf:#1E1A18!important;--sf2:#272220!important;--sf3:#302B28!important;
+      --ink:#EDE8E5!important;--ink2:#AEA69F!important;--ink3:#6A6158!important;--ink4:#3E3835!important;
+      --bd:rgba(237,232,229,.08)!important;--bds:rgba(237,232,229,.15)!important;
+      --reds:rgba(230,0,40,.20)!important;--poss:rgba(46,125,91,.20)!important;
+      --warns:rgba(184,110,31,.20)!important;--infos:rgba(57,99,168,.20)!important;
+      --sh:0 1px 4px rgba(0,0,0,.35),0 1px 2px rgba(0,0,0,.25)!important;
+      --shm:0 6px 24px rgba(0,0,0,.50)!important;
+    }
+    </style>""", unsafe_allow_html=True)
+elif _theme == 'light':
+    # 시스템이 다크여도 라이트 강제
+    st.markdown("""<style>
+    @media(prefers-color-scheme:dark){
+      :root{
+        --bg:#FAF7F5!important;--sf:#FFFFFF!important;--sf2:#F3EFEB!important;--sf3:#ECE7E2!important;
+        --ink:#1F1B1B!important;--ink2:#5B5450!important;--ink3:#9A918C!important;--ink4:#C3BAB4!important;
+        --bd:rgba(31,27,27,.09)!important;--bds:rgba(31,27,27,.16)!important;
+        --reds:#FFE9EC!important;--poss:#E4F1EA!important;
+        --warns:#FBEEDB!important;--infos:#E4ECF8!important;
+        --sh:0 1px 3px rgba(31,27,27,.06),0 1px 2px rgba(31,27,27,.04)!important;
+        --shm:0 4px 20px rgba(31,27,27,.10)!important;
+      }
+    }
+    </style>""", unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════
 #  SVG icons
@@ -489,6 +607,16 @@ def render_sidebar():
       <div style="font-size:14px;font-weight:600;color:var(--ink)">{_auth_user.get("name","")}</div>
     </div>'''
 
+    # 테마 토글 링크 — 현재 테마 반대로 이동
+    I_MOON = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+    I_SUN  = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'
+    # 버튼 레이블: 라이트 상태면 "다크 모드로" 제안, 다크(auto 포함)면 "라이트 모드로" 제안
+    if _theme == 'light':
+        _next_theme, _theme_icon, _theme_lbl = 'dark',  I_MOON, '다크 모드'
+    else:  # 'dark' or 'auto' (auto는 시스템 다크이므로 라이트 전환 제안)
+        _next_theme, _theme_icon, _theme_lbl = 'light', I_SUN,  '라이트 모드'
+    theme_link  = f'<a href="?page={page}&t={_session_token}&theme={_next_theme}" target="_self" class="theme-btn">{_theme_icon} {_theme_lbl}</a>'
+
     html = f'''<div class="c-sb">
       <div class="c-sb-logo">{logo_h}</div>
       <div class="c-sb-nav">
@@ -497,6 +625,9 @@ def render_sidebar():
         <div style="margin-top:auto;padding-top:16px">
           {user_html}
         </div>
+      </div>
+      <div class="sb-foot">
+        {theme_link}
       </div>
     </div>'''
     st.markdown(html, unsafe_allow_html=True)
