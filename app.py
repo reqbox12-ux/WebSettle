@@ -107,7 +107,7 @@ button[data-testid="collapsedControl"]{display:none!important}
 /* ── Mobile header (logo top-center) ────────── */
 .mob-hd{display:none;justify-content:center;align-items:center;
   padding:14px 0 10px;margin-bottom:4px}
-.mob-hd img,.mob-hd svg{max-width:110px;height:auto}
+.mob-hd img,.mob-hd svg{max-width:180px;height:auto}
 
 /* ── Filter bar ─────────────────────────────── */
 .filter-wrap{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);
@@ -295,9 +295,10 @@ def get_logo_html(mobile=False):
     logo_path = Path("assets/logo.png")
     if logo_path.exists():
         b64 = base64.b64encode(logo_path.read_bytes()).decode()
-        w = "90" if mobile else "148"
+        w = "160" if mobile else "148"
         return f'<img src="data:image/png;base64,{b64}" style="width:{w}px;height:auto;display:block" alt="LAON SPORTS">'
-    return I_LAON_SVG
+    w = "160" if mobile else "140"
+    return f'<svg viewBox="0 0 210 80" xmlns="http://www.w3.org/2000/svg" style="width:{w}px;height:auto;display:block"><text x="2" y="56" fill="#E60028" font-size="62" font-weight="900" font-family="Arial Black,Impact,system-ui,sans-serif" letter-spacing="-3">LAON</text><text x="7" y="74" fill="#E60028" font-size="13.5" font-weight="700" font-family="Arial,Helvetica,system-ui,sans-serif" letter-spacing="10">SPORTS</text></svg>'
 
 # ══════════════════════════════════════════════════════════════════════
 #  Helpers
