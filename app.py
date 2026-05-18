@@ -3,6 +3,7 @@ import pandas as pd
 import json, base64
 import tempfile, os
 from pathlib import Path
+from datetime import datetime
 import plotly.graph_objects as go
 
 from modules.db import (
@@ -270,7 +271,8 @@ load_keyword_rules()
 #  State & routing
 # ══════════════════════════════════════════════════════════════════════
 page = st.query_params.get('page', 'dashboard')
-for k, v in [('year', 2026), ('month', 4), ('sel_br', '전체'), ('drill', None)]:
+_now = datetime.now()
+for k, v in [('year', _now.year), ('month', _now.month), ('sel_br', '전체'), ('drill', None)]:
     if k not in st.session_state:
         st.session_state[k] = v
 
@@ -722,7 +724,7 @@ if page == 'dashboard':
     # Inline filter bar (always visible, PC & Mobile)
     st.markdown('<div class="filter-wrap">', unsafe_allow_html=True)
     c1, c2, c3 = st.columns([1, 1, 2])
-    yrs = [2026, 2025]
+    yrs = list(range(_now.year, _now.year - 3, -1))
     year  = c1.selectbox("연도", yrs, index=yrs.index(year) if year in yrs else 0, key="f_yr")
     month = c2.selectbox("월", list(range(1,13)), index=month-1, key="f_mn", format_func=lambda m: f"{m}월")
     sel   = c3.selectbox("지점", ['전체']+BRANCH_LIST, key="f_br")
@@ -875,7 +877,7 @@ elif page == 'branch':
     # 필터
     st.markdown('<div class="filter-wrap">', unsafe_allow_html=True)
     fc1, fc2, fc3 = st.columns([1, 1, 2])
-    yrs   = [2026, 2025]
+    yrs   = list(range(_now.year, _now.year - 3, -1))
     year  = fc1.selectbox("연도", yrs, index=yrs.index(year) if year in yrs else 0, key="br_yr")
     month = fc2.selectbox("월", list(range(1,13)), index=month-1, key="br_mn", format_func=lambda m: f"{m}월")
     br_sel = fc3.selectbox("지점 선택", BRANCH_LIST, key="br_sel")
@@ -936,8 +938,8 @@ elif page == 'upload':
     with tab1:
         st.subheader("카드 매출 업로드")
         c1, c2 = st.columns(2)
-        uy = c1.number_input("연도", value=2026, min_value=2020, max_value=2030, key="uy")
-        um = c2.selectbox("월", list(range(1,13)), index=3, key="um", format_func=lambda m: f"{m}월")
+        uy = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="uy")
+        um = c2.selectbox("월", list(range(1,13)), index=_now.month-1, key="um", format_func=lambda m: f"{m}월")
 
         sec("① 카드사 결과 집계 조회")
         f1 = st.file_uploader("카드사 결과 집계 조회.xlsx", type=["xlsx"], key="agg")
@@ -974,8 +976,8 @@ elif page == 'upload':
     with tab2:
         st.subheader("통장 내역 업로드")
         c1, c2 = st.columns(2)
-        by = c1.number_input("연도", value=2026, min_value=2020, max_value=2030, key="by")
-        bm = c2.selectbox("월", list(range(1,13)), index=3, key="bm", format_func=lambda m: f"{m}월")
+        by = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="by")
+        bm = c2.selectbox("월", list(range(1,13)), index=_now.month-1, key="bm", format_func=lambda m: f"{m}월")
         st.caption("💡 하나통장(여러 시트)과 신한통장이 합쳐진 파일을 그대로 업로드하세요. 자동으로 감지합니다.")
         fb = st.file_uploader("통장내역.xlsx", type=["xlsx"], key="bank")
 
@@ -1047,8 +1049,8 @@ elif page == 'upload':
     with tab3:
         st.subheader("인건비 업로드")
         c1, c2 = st.columns(2)
-        py = c1.number_input("연도", value=2026, min_value=2020, max_value=2030, key="py")
-        pm = c2.selectbox("월", list(range(1,13)), index=3, key="pm", format_func=lambda m: f"{m}월")
+        py = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="py")
+        pm = c2.selectbox("월", list(range(1,13)), index=_now.month-1, key="pm", format_func=lambda m: f"{m}월")
         fp = st.file_uploader("지점별 대시보드.xlsx", type=["xlsx"], key="pay")
         if fp and st.button("저장", type="primary", key="b_pay"):
             with st.spinner("처리 중..."):
@@ -1077,8 +1079,9 @@ elif page == 'rules':
     with tab1:
         # 연/월 필터
         fc1, fc2, fc3 = st.columns([1, 1, 2])
-        rv_year  = fc1.selectbox("연도", list(range(2024, 2028)), index=2, key="rv_year")
-        rv_month = fc2.selectbox("월",   list(range(1, 13)),      index=4, key="rv_month")
+        _yr_list = list(range(2024, _now.year + 2))
+        rv_year  = fc1.selectbox("연도", _yr_list, index=_yr_list.index(_now.year) if _now.year in _yr_list else len(_yr_list)-1, key="rv_year")
+        rv_month = fc2.selectbox("월",   list(range(1, 13)), index=_now.month-1, key="rv_month")
         rv_bank  = fc3.selectbox("통장", ["전체", "hana", "신한(shinhan)"], key="rv_bank")
 
         bank_filter = None if rv_bank == "전체" else ("shinhan" if "신한" in rv_bank else "hana")
