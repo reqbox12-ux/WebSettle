@@ -853,34 +853,12 @@ if page == 'dashboard':
         exp_df_pdf   = c_exp(year, month)
         html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
         html_b64     = base64.b64encode(html_content.encode("utf-8")).decode()
-        btn_html = f'''
-        <a href="data:text/html;base64,{html_b64}"
-           download="정산보고서_{year}년{month}월.html"
-           style="background:var(--red,#E53935);color:#fff;border-radius:8px;
-                  font-weight:600;font-size:14px;padding:10px 22px;
-                  text-decoration:none;white-space:nowrap;display:inline-block;
-                  box-shadow:0 2px 6px rgba(229,57,53,.35)">
-          정산서 다운로드
-        </a>'''
+        btn_part = f'<a href="data:text/html;base64,{html_b64}" download="정산보고서_{year}년{month}월.html" style="background:#E53935;color:#fff;border-radius:8px;font-weight:600;font-size:14px;padding:10px 22px;text-decoration:none;white-space:nowrap;display:inline-block;box-shadow:0 2px 6px rgba(229,57,53,.35)">정산서 다운로드</a>'
     else:
-        btn_html = '''
-        <span style="background:#ccc;color:#fff;border-radius:8px;
-                     font-weight:600;font-size:14px;padding:10px 22px;
-                     white-space:nowrap;display:inline-block;cursor:not-allowed">
-          정산서 다운로드
-        </span>'''
+        btn_part = '<span style="background:#ccc;color:#fff;border-radius:8px;font-weight:600;font-size:14px;padding:10px 22px;white-space:nowrap;display:inline-block;cursor:not-allowed">정산서 다운로드</span>'
 
-    st.markdown(f'''
-    <div class="pdf-box" style="display:flex;align-items:center;
-         justify-content:space-between;flex-wrap:wrap;gap:14px">
-      <div>
-        <div class="pdf-t" style="margin-bottom:6px">📄 정산서 다운로드</div>
-        <div style="font-size:12px;color:var(--ink3,#888)">
-          다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장
-        </div>
-      </div>
-      {btn_html}
-    </div>''', unsafe_allow_html=True)
+    card_html = f'<div class="pdf-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px"><div><div class="pdf-t" style="margin-bottom:6px">📄 정산서 다운로드</div><div style="font-size:12px;color:#888">다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장</div></div>{btn_part}</div>'
+    st.markdown(card_html, unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════
 #  2. BRANCH DETAIL
