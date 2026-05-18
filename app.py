@@ -384,17 +384,14 @@ def _login_logo_html():
 
 
 def _show_login():
-    # ─ 지점 수 ─
-    _bcnt = len(BRANCH_LIST)
-
-    # ─ 왼쪽 패널 로고 (좌측 정렬) ─
+    # ─ 왼쪽 패널 로고 (크게) ─
     _lp = Path("assets/logo.png")
     if _lp.exists():
         _b64 = base64.b64encode(_lp.read_bytes()).decode()
-        _ll_logo = f'<img src="data:image/png;base64,{_b64}" style="height:30px;width:auto" alt="LAON SPORTS">'
+        _ll_logo = f'<img src="data:image/png;base64,{_b64}" style="height:80px;width:auto;display:block" alt="LAON SPORTS">'
     else:
         _ll_logo = (
-            '<svg viewBox="0 0 210 80" xmlns="http://www.w3.org/2000/svg" style="height:36px;width:auto">'
+            '<svg viewBox="0 0 210 80" xmlns="http://www.w3.org/2000/svg" style="height:96px;width:auto;display:block">'
             '<text x="2" y="56" fill="#E60028" font-size="62" font-weight="900" '
             'font-family="Arial Black,Impact,system-ui" letter-spacing="-3">LAON</text>'
             '<text x="7" y="74" fill="#E60028" font-size="13.5" font-weight="700" '
@@ -402,145 +399,135 @@ def _show_login():
             '</svg>'
         )
 
-    st.markdown(f"""<style>
+    st.markdown("""<style>
     /* ── 로그인 페이지 전용 리셋 ── */
-    #MainMenu,header,footer{{visibility:hidden!important}}
+    #MainMenu,header,footer{display:none!important}
+    [data-testid="stDecoration"],[data-testid="stStatusWidget"],
+    [data-testid="stToolbar"],[data-testid="stAppDeployButton"],
+    [data-testid="stHeader"]{display:none!important}
 
-    /* 사이드바 마진 제거 (로그인 전용) */
-    .stApp [data-testid="stMain"]{{margin-left:0!important;width:100%!important;padding:0!important}}
-    .stApp [data-testid="stAppViewContainer"]{{padding-left:0!important;background:#FAF8F6!important}}
-    .stApp .block-container{{padding:0!important;max-width:100%!important}}
+    /* 사이드바 마진 완전 제거 */
+    .stApp [data-testid="stMain"]{margin-left:0!important;width:100%!important;padding:0!important}
+    .stApp [data-testid="stAppViewContainer"]{padding-left:0!important;background:linear-gradient(to right,#171210 50%,#FAF8F6 50%)!important}
+    .stApp [data-testid="stMainBlockContainer"]{padding:0!important;max-width:100%!important}
+    .stApp .block-container{padding:0!important;max-width:100%!important}
 
     /* 컬럼 전체 높이 */
-    .stApp [data-testid="stVerticalBlock"]{{min-height:100vh}}
-    .stApp [data-testid="stHorizontalBlock"]{{gap:0!important;min-height:100vh;align-items:stretch!important}}
-    .stApp [data-testid="stColumn"]{{padding:0!important;min-height:100vh}}
+    .stApp [data-testid="stVerticalBlock"]{min-height:100vh}
+    .stApp [data-testid="stHorizontalBlock"]{gap:0!important;min-height:100vh;align-items:stretch!important}
+    .stApp [data-testid="stColumn"]{padding:0!important;min-height:100vh}
 
     /* ── 왼쪽 다크 패널 ── */
-    .stApp [data-testid="stColumn"]:first-child{{
+    .stApp [data-testid="stColumn"]:first-child{
         background:
             radial-gradient(ellipse at 28% 72%, rgba(190,12,30,.30) 0%,transparent 54%),
             radial-gradient(ellipse at 72% 20%, rgba(120,8,20,.18) 0%,transparent 40%),
             #171210;
-    }}
-    /* ── 오른쪽 라이트 패널 ── */
-    .stApp [data-testid="stColumn"]:last-child{{background:#FAF8F6!important}}
-    .stApp [data-testid="stColumn"]:last-child>div{{padding:0 64px!important}}
+    }
 
-    /* ── 왼쪽 패널 내부 ── */
-    .ll-wrap{{display:flex;flex-direction:column;justify-content:space-between;
-        min-height:100vh;padding:44px 52px;font-family:'Pretendard Variable',system-ui,sans-serif}}
-    .ll-badge{{font-size:10px;font-weight:600;letter-spacing:2.5px;color:rgba(237,232,229,.38);
-        margin-bottom:20px;display:block;text-transform:uppercase}}
-    .ll-headline{{font-size:clamp(26px,2.8vw,40px);font-weight:800;line-height:1.28;
-        color:#EDE8E5!important;margin:0 0 18px;letter-spacing:-.5px}}
-    .ll-desc{{font-size:14px;line-height:1.80;color:rgba(237,232,229,.48)!important;margin:0}}
-    .ll-stats{{display:flex;gap:32px;margin-bottom:24px}}
-    .ll-stat-n{{display:block;font-size:26px;font-weight:800;color:#EDE8E5!important;
-        line-height:1;margin-bottom:5px}}
-    .ll-stat-l{{display:block;font-size:11px;color:rgba(237,232,229,.38)!important;letter-spacing:.5px}}
-    .ll-copy{{font-size:11px;color:rgba(237,232,229,.22)!important;margin:0}}
+    /* ── 오른쪽 라이트 패널 ── */
+    .stApp [data-testid="stColumn"]:last-child{background:#FAF8F6!important}
+    .stApp [data-testid="stColumn"]:last-child>div{padding:0 64px!important}
+
+    /* ── 왼쪽 패널: 로고 래퍼만 ── */
+    .ll-wrap{
+        display:flex;align-items:flex-start;justify-content:flex-start;
+        min-height:100vh;padding:44px 52px;
+    }
 
     /* ── 오른쪽 패널 헤더 텍스트 ── */
-    .lr-hdr{{max-width:420px;margin-bottom:28px;font-family:'Pretendard Variable',system-ui,sans-serif}}
-    .lr-sign{{font-size:10px;font-weight:700;letter-spacing:2.5px;color:#E60028!important;
-        margin:0 0 14px;text-transform:uppercase;display:block}}
-    .lr-headline{{font-size:28px;font-weight:800;color:#1F1B1B!important;
-        margin:0 0 8px;line-height:1.3;letter-spacing:-.3px}}
-    .lr-sub{{font-size:14px;color:#9A918C!important;margin:0}}
+    .lr-hdr{max-width:420px;margin-bottom:28px;font-family:'Pretendard Variable',system-ui,sans-serif}
+    .lr-sign{font-size:10px;font-weight:700;letter-spacing:2.5px;color:#E60028!important;
+        margin:0 0 14px;text-transform:uppercase;display:block}
+    .lr-headline{font-size:28px;font-weight:800;color:#1F1B1B!important;
+        margin:0 0 8px;line-height:1.3;letter-spacing:-.3px}
+    .lr-sub{font-size:14px;color:#9A918C!important;margin:0}
 
     /* ── 오른쪽 위젯 최대 너비 ── */
     .stApp [data-testid="stColumn"]:last-child [data-testid="stTextInput"],
     .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"],
     .stApp [data-testid="stColumn"]:last-child .stButton,
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="notification"]{{max-width:420px}}
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="notification"]{max-width:420px}
 
-    /* 라벨 */
-    .stApp [data-testid="stColumn"]:last-child label{{
-        font-size:13px!important;font-weight:600!important;color:#1F1B1B!important}}
+    /* 필드 라벨 */
+    .stApp [data-testid="stColumn"]:last-child label{
+        font-size:13px!important;font-weight:600!important;color:#1F1B1B!important}
 
-    /* 인풋 박스 */
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"]{{
+    /* ── 인풋 외부 래퍼 (텍스트+아이콘 묶음) ── */
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"]{
         background:#FFFFFF!important;border:1.5px solid #E5E0DB!important;
-        border-radius:10px!important;box-shadow:none!important}}
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"]:focus-within{{
-        border-color:#E60028!important;box-shadow:0 0 0 3px rgba(230,0,40,.10)!important}}
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"] input{{
-        font-size:15px!important;color:#1F1B1B!important;height:48px!important;
-        padding:0 14px!important;background:transparent!important;border:none!important}}
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"] input::placeholder{{
-        color:#C3BAB4!important}}
+        border-radius:10px!important;box-shadow:none!important;outline:none!important}
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"]:focus-within{
+        border-color:#E60028!important;box-shadow:0 0 0 3px rgba(230,0,40,.10)!important}
 
-    /* 비밀번호 눈 아이콘 */
-    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input-password-mask-toggle-button"]{{
-        color:#9A918C!important}}
+    /* 인풋 내부 텍스트 영역 */
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] input{
+        font-size:15px!important;color:#1F1B1B!important;height:48px!important;
+        padding:0 14px!important;background:transparent!important;
+        border:none!important;box-shadow:none!important}
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] input::placeholder{
+        color:#C3BAB4!important}
+
+    /* 비밀번호 눈 아이콘 버튼 (어두운 영역 해결) */
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] button{
+        background:#FFFFFF!important;border:none!important;
+        color:#9A918C!important;height:48px!important;padding:0 14px!important}
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] button:hover{
+        background:#F5F0EC!important;color:#5B5450!important}
+
+    /* base-input도 함께 처리 */
+    .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"]{
+        background:#FFFFFF!important;border:none!important;box-shadow:none!important}
 
     /* 로그인 버튼 */
-    .stApp [data-testid="stColumn"]:last-child .stButton>button{{
+    .stApp [data-testid="stColumn"]:last-child .stButton>button{
         background:#E60028!important;color:#fff!important;border:none!important;
         border-radius:10px!important;font-size:15px!important;font-weight:700!important;
         height:50px!important;margin-top:8px!important;letter-spacing:-.2px;
         font-family:'Pretendard Variable',system-ui,sans-serif!important;
-        transition:background .18s!important;box-shadow:0 2px 12px rgba(230,0,40,.25)!important}}
-    .stApp [data-testid="stColumn"]:last-child .stButton>button:hover{{
-        background:#C00022!important;box-shadow:0 4px 16px rgba(230,0,40,.35)!important}}
+        transition:background .18s!important;box-shadow:0 2px 12px rgba(230,0,40,.25)!important}
+    .stApp [data-testid="stColumn"]:last-child .stButton>button:hover{
+        background:#C00022!important;box-shadow:0 4px 16px rgba(230,0,40,.35)!important}
 
-    /* 체크박스 */
-    .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] label{{
-        font-size:13px!important;color:#5B5450!important;font-weight:400!important}}
+    /* 체크박스 라벨 + 내부 p 태그까지 강제 */
+    .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] label,
+    .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] label p,
+    .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] p{
+        font-size:13px!important;color:#5B5450!important;font-weight:500!important}
 
     /* 에러/경고 메시지 */
-    .stApp [data-testid="stColumn"]:last-child [data-testid="stNotification"]{{
-        background:#FFF3F5!important;border-color:#E60028!important}}
+    .stApp [data-testid="stColumn"]:last-child [data-testid="stNotification"]{
+        background:#FFF3F5!important;border-color:#E60028!important}
 
     /* ── 모바일: 왼쪽 숨기고 다크 배경 ── */
-    @media(max-width:700px){{
-        .stApp [data-testid="stColumn"]:first-child{{display:none!important}}
-        .stApp [data-testid="stColumn"]:last-child{{background:#171210!important}}
-        .stApp [data-testid="stColumn"]:last-child>div{{padding:0 28px!important}}
-        .lr-headline{{color:#EDE8E5!important}}
-        .lr-sub{{color:rgba(237,232,229,.55)!important}}
-        .stApp [data-testid="stColumn"]:last-child label{{color:#EDE8E5!important}}
-        .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"]{{
-            background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.14)!important}}
-        .stApp [data-testid="stColumn"]:last-child [data-baseweb="base-input"] input{{
-            color:#EDE8E5!important}}
-        .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] label{{
-            color:rgba(237,232,229,.7)!important}}
-    }}
+    @media(max-width:700px){
+        .stApp [data-testid="stColumn"]:first-child{display:none!important}
+        .stApp [data-testid="stColumn"]:last-child{background:#171210!important}
+        .stApp [data-testid="stColumn"]:last-child>div{padding:0 28px!important}
+        .lr-headline{color:#EDE8E5!important}
+        .lr-sub{color:rgba(237,232,229,.55)!important}
+        .stApp [data-testid="stColumn"]:last-child label{color:#EDE8E5!important}
+        .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"]{
+            background:rgba(255,255,255,.07)!important;border-color:rgba(255,255,255,.14)!important}
+        .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] input{
+            color:#EDE8E5!important}
+        .stApp [data-testid="stColumn"]:last-child [data-baseweb="input"] button{
+            background:transparent!important}
+        .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] label,
+        .stApp [data-testid="stColumn"]:last-child [data-testid="stCheckbox"] p{
+            color:rgba(237,232,229,.7)!important}
+    }
     </style>""", unsafe_allow_html=True)
 
     left, right = st.columns([1, 1])
 
-    # ── 왼쪽: 브랜드 패널 ──
+    # ── 왼쪽: 로고만 ──
     with left:
-        st.markdown(f"""
-        <div class="ll-wrap">
-          <div>{_ll_logo}</div>
-          <div>
-            <span class="ll-badge">Websettle · Internal Dashboard</span>
-            <h1 class="ll-headline">지표는 단순하게,<br>판단은 빠르게.</h1>
-            <p class="ll-desc">{_bcnt}개 지점의 매출·정산·손익을<br>한 화면에서. 라온스포츠 경영진을<br>위한 사내 정산 대시보드.</p>
-          </div>
-          <div>
-            <div class="ll-stats">
-              <div>
-                <span class="ll-stat-n">{_bcnt:02d}</span>
-                <span class="ll-stat-l">운영 지점</span>
-              </div>
-              <div>
-                <span class="ll-stat-n">매월</span>
-                <span class="ll-stat-l">정산 업데이트</span>
-              </div>
-            </div>
-            <p class="ll-copy">© 2026 LAON SPORTS Co., Ltd.</p>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f'<div class="ll-wrap">{_ll_logo}</div>', unsafe_allow_html=True)
 
     # ── 오른쪽: 로그인 폼 ──
     with right:
-        st.markdown("<div style='height:18vh'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='height:20vh'></div>", unsafe_allow_html=True)
         st.markdown("""
         <div class="lr-hdr">
           <p class="lr-sign">Sign In</p>
