@@ -16,6 +16,7 @@ from modules.db import (
 from modules.parser import (
     parse_card_aggregate, parse_credit_card,
     parse_hana, parse_shinhan,
+    parse_bank_auto, recalc_vat,
     parse_payroll_freelance, parse_payroll_insured,
 )
 from modules.classifier import classify_transactions, add_rule
@@ -974,21 +975,44 @@ elif page == 'upload':
         c1, c2 = st.columns(2)
         by = c1.number_input("연도", value=2026, min_value=2020, max_value=2030, key="by")
         bm = c2.selectbox("월", list(range(1,13)), index=3, key="bm", format_func=lambda m: f"{m}월")
-        fb = st.file_uploader("정산내역.xlsx", type=["xlsx"], key="bank")
+        st.caption("💡 하나통장(여러 시트)과 신한통장이 합쳐진 파일을 그대로 업로드하세요. 자동으로 감지합니다.")
+        fb = st.file_uploader("통장내역.xlsx", type=["xlsx"], key="bank")
         if fb and st.button("저장", type="primary", key="b_bank"):
-            with st.spinner("처리 중..."):
+            with st.spinner("시트 자동 감지 및 분류 중..."):
                 xl = pd.ExcelFile(fb)
+                bank_data = parse_bank_auto(xl, by, bm)
                 saved = False
-                for bank, parser in [("hana", parse_hana), ("shinhan", parse_shinhan)]:
+                bank_names = {"hana": "하나통장", "shinhan": "신한통장"}
+                for bank, df in bank_data.items():
+                    if df.empty:
+                        continue
                     try:
-                        df = parser(xl, by, bm)
+                        # 1) 키워드 규칙으로 자동분류 (branch/category 빈 행만)
                         df = classify_transactions(df, bank)
+                        # 2) 분류 결과 기준으로 VAT 재계산
+                        df = recalc_vat(df)
+                        # 3) DB 저장
                         upsert_bank_transactions(df, bank, by, bm)
-                        st.success(f"✅ {'하나' if bank=='hana' else '신한'}통장: {len(df)}건 (미분류 {int(df.needs_review.sum())}건)")
+                        total    = len(df)
+                        auto_ok  = int((df.needs_review == 0).sum())
+                        need_rev = int(df.needs_review.sum())
+                        st.success(
+                            f"✅ {bank_names[bank]}: 총 {total}건 저장 "
+                            f"(자동분류 {auto_ok}건 / 미분류 {need_rev}건)"
+                        )
                         saved = True
                     except Exception as e:
-                        st.error(f"❌ {bank}: {e}")
-                if saved:
+                        st.error(f"❌ {bank_names[bank]} 저장 실패: {e}")
+                if not saved:
+                    st.warning("⚠️ 하나·신한 통장 시트를 찾지 못했습니다. 파일을 확인해주세요.")
+                else:
+                    if any(not bank_data[b].empty for b in bank_data):
+                        need_total = sum(
+                            int(df.needs_review.sum())
+                            for df in bank_data.values() if not df.empty
+                        )
+                        if need_total > 0:
+                            st.info(f"📋 미분류 {need_total}건은 '미분류 검토' 메뉴에서 확인하세요.")
                     st.cache_data.clear()
 
     with tab3:
