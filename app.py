@@ -279,11 +279,7 @@ load_keyword_rules()
 init_users_table()
 
 # ── 쿠키 매니저 (로그인 유지용) ──────────────────────────────
-@st.cache_resource
-def _get_cookie_mgr():
-    return stx.CookieManager(key="laon_ws")
-
-_cookie_mgr = _get_cookie_mgr()
+_cookie_mgr = stx.CookieManager(key="laon_ws")
 
 # ══════════════════════════════════════════════════════════════════════
 #  로그인 페이지
