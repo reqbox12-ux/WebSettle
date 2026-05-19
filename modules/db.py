@@ -460,6 +460,58 @@ def get_expense_by_category(year: int, month: int = None, branch: str = None):
         return df
 
 
+def get_revenue_by_category(year: int, month: int = None, branch: str = None):
+    """통장 매출: 계정과목별 입금 내역 반환 (지점 상세 세부 표시용)"""
+    revenue_cats = (
+        "'기타매출(현금)','PT매출(현금)','GX매출(현금)',"
+        "'골프매출(현금)','키즈매출(현금)',"
+        "'기타매출(카드)','PT매출(카드)','GX매출(카드)',"
+        "'골프매출(카드)','키즈매출(카드)',"
+        "'도급비','시설상환비','카페매출'"
+    )
+    if USE_POSTGRES:
+        filters = ["year=:year", "is_excluded=0", "deposit > 0",
+                   f"category IN ({revenue_cats})"]
+        params: dict = {"year": year}
+        if month:
+            filters.append("month=:month"); params["month"] = month
+        if branch:
+            filters.append("branch=:branch"); params["branch"] = branch
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, category,
+                   SUM(deposit)       as total_deposit,
+                   SUM(vat)           as total_vat,
+                   SUM(deposit - vat) as supply_amount
+            FROM bank_transactions
+            WHERE {where}
+            GROUP BY branch, category
+        """
+        return pd.read_sql(text(query), engine, params=params)
+    else:
+        conn = get_conn()
+        filters = ["year=?", "is_excluded=0", "deposit > 0",
+                   f"category IN ({revenue_cats})"]
+        params_list: list = [year]
+        if month:
+            filters.append("month=?"); params_list.append(month)
+        if branch:
+            filters.append("branch=?"); params_list.append(branch)
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch, category,
+                   SUM(deposit)       as total_deposit,
+                   SUM(vat)           as total_vat,
+                   SUM(deposit - vat) as supply_amount
+            FROM bank_transactions
+            WHERE {where}
+            GROUP BY branch, category
+        """
+        df = pd.read_sql(query, conn, params=params_list)
+        conn.close()
+        return df
+
+
 def get_unreviewed_transactions():
     conn = get_conn()
     df = pd.read_sql(

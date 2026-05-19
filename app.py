@@ -11,7 +11,7 @@ from modules.db import (
     init_db, load_keyword_rules,
     upsert_card_sales, upsert_bank_transactions, upsert_payroll,
     get_card_by_branch, get_branch_cash_revenue,
-    get_expense_by_category, get_payroll_summary,
+    get_expense_by_category, get_revenue_by_category, get_payroll_summary,
     get_unreviewed_transactions, get_all_bank_transactions,
     update_transaction_classification,
     get_keyword_rules, EXPENSE_CATEGORIES,
@@ -692,6 +692,8 @@ def c_cash(y, m): return get_branch_cash_revenue(y, m)
 def c_pay(y, m):  return get_payroll_summary(y, m)
 @st.cache_data(ttl=300, show_spinner=False)
 def c_exp(y, m):  return get_expense_by_category(y, m)
+@st.cache_data(ttl=300, show_spinner=False)
+def c_rev(y, m):  return get_revenue_by_category(y, m)
 
 def build_summary(year, month):
     card_df = c_card(year, month); cash_df = c_cash(year, month)
@@ -831,69 +833,104 @@ def render_kpi(df):
 #  Branch detail panel
 # ══════════════════════════════════════════════════════════════════════
 def render_detail(row, year, month):
-    b     = row['branch']
-    pnl   = int(row['손익'])
-    rate  = row['이익률']
+    b        = row['branch']
+    pnl      = int(row['손익'])
+    rate     = row['이익률']
     pnl_cls  = "c-pos" if pnl >= 0 else "c-red"
     rate_bg  = "background:var(--poss);color:var(--pos)" if rate >= 0 else "background:var(--reds);color:var(--red)"
-    sign  = "▲" if pnl >= 0 else "▼"
+    sign     = "▲" if pnl >= 0 else "▼"
 
-    # 카드 입금 = 공급가액 + VAT
-    card_dep = int(row['카드공급가액']) + int(row['카드VAT'])
-
-    # 현금 입금 = 공급가액 + VAT
-    cash_dep = int(row['현금공급가액']) + int(row['현금VAT'])
-
-    def dr(lbl, amt, cls='', sub=False):
+    def dr(lbl, amt, cls='', sub=False, bold=False):
         row_cls = "dp-row sub" if sub else "dp-row"
-        lbl_cls = "dp-lbl" if not sub else "dp-lbl"
+        if bold: row_cls += " tot"
+        lbl_cls = "dp-lbl m" if bold else ("dp-lbl" if not sub else "dp-lbl")
         amt_cls = f"dp-amt {cls}" if cls else "dp-amt"
         return f'<div class="{row_cls}"><span class="{lbl_cls}">{lbl}</span><span class="{amt_cls}">{fn(amt)}원</span></div>'
 
-    # Expense detail from DB
-    exp_df = c_exp(year, month)
-    if not exp_df.empty:
-        br_exp = exp_df[exp_df.branch == b]
-        exp_by_cat = br_exp.groupby("category")["amount"].sum().to_dict()
-    else:
-        exp_by_cat = {}
+    # ── 매출 계정과목별 데이터 ─────────────────────────────
+    rev_df = c_rev(year, month)
+    rev_by_cat = {}
+    if not rev_df.empty:
+        br_rev = rev_df[rev_df.branch == b]
+        rev_by_cat = br_rev.set_index('category')['supply_amount'].to_dict()
+
+    CARD_CATS = ["PT매출(카드)", "GX매출(카드)", "골프매출(카드)", "키즈매출(카드)", "기타매출(카드)"]
+    CASH_CATS = ["PT매출(현금)", "GX매출(현금)", "골프매출(현금)", "키즈매출(현금)", "기타매출(현금)",
+                 "도급비", "시설상환비", "카페매출"]
+
+    # 카드 세부 행
+    card_rows = ""
+    for cat in CARD_CATS:
+        amt = int(rev_by_cat.get(cat, 0))
+        if amt > 0:
+            card_rows += dr(cat, amt, sub=True)
+    if not card_rows:
+        card_rows = '<div class="dp-row sub"><span class="dp-lbl">내역 없음</span><span class="dp-amt">—</span></div>'
+
+    # 현금 세부 행
+    cash_rows = ""
+    for cat in CASH_CATS:
+        amt = int(rev_by_cat.get(cat, 0))
+        if amt > 0:
+            cash_rows += dr(cat, amt, sub=True)
+    if not cash_rows:
+        cash_rows = '<div class="dp-row sub"><span class="dp-lbl">내역 없음</span><span class="dp-amt">—</span></div>'
+
+    # 카드 VAT/수수료 정보
+    card_fee_html = ""
+    if int(row['카드수수료']) > 0 or int(row['카드VAT']) > 0:
+        card_fee_html = (
+            f'<div class="dp-row sub" style="color:var(--ink3);font-size:12px">'
+            f'<span>부가세 {fn(row["카드VAT"])}원 · 수수료 {fn(row["카드수수료"])}원 차감</span></div>'
+        )
 
     card_html = f"""
     <div class="dp-sec">
-      <div class="dp-sec-t">카드 매출</div>
-      {dr('공급가액', row['카드공급가액'], 'dp-lbl m')}
-      {dr('부가세 (공급가액×10%)', row['카드VAT'], sub=True)}
-      {dr('수수료', row['카드수수료'], sub=True)}
-      <div class="dp-row tot"><span class="dp-lbl m">카드 실수령</span><span class="dp-amt c-ink">{fn(row['카드실수령'])}원</span></div>
+      <div class="dp-sec-t">카드 매출 세부</div>
+      {card_rows}
+      {card_fee_html}
+      <div class="dp-row tot"><span class="dp-lbl m">카드 실수령</span>
+        <span class="dp-amt c-ink">{fn(row['카드실수령'])}원</span></div>
     </div>"""
 
     cash_html = f"""
-    <div class="dp-sec">
-      <div class="dp-sec-t">현금 매출</div>
-      {dr('입금액', cash_dep, 'dp-lbl m')}
-      {dr('부가세', row['현금VAT'], sub=True)}
-      <div class="dp-row tot"><span class="dp-lbl m">현금 공급가액</span><span class="dp-amt c-ink">{fn(row['현금공급가액'])}원</span></div>
+    <div class="dp-sec" style="margin-top:16px">
+      <div class="dp-sec-t">현금·기타 매출 세부</div>
+      {cash_rows}
+      <div class="dp-row sub" style="color:var(--ink3);font-size:12px">
+        <span>부가세 {fn(row['현금VAT'])}원 차감</span></div>
+      <div class="dp-row tot"><span class="dp-lbl m">현금 공급가액</span>
+        <span class="dp-amt c-ink">{fn(row['현금공급가액'])}원</span></div>
     </div>"""
 
+    # ── 지출 데이터 ──────────────────────────────────────
+    exp_df = c_exp(year, month)
+    exp_by_cat = {}
+    if not exp_df.empty:
+        br_exp = exp_df[exp_df.branch == b]
+        exp_by_cat = br_exp.groupby("category")["amount"].sum().to_dict()
+
     pay_rows = ""
-    pay_items = [("급여",row['급여']),("4대보험료",row['4대보험료']),
-                 ("소득세·지방세",row['소득세지방세']),("프리랜서",row['프리랜서']),("프리랜서 세금",row['프리랜서세금'])]
-    for lbl, amt in pay_items:
-        if amt > 0: pay_rows += dr(lbl, amt, sub=True)
+    for lbl, key in [("급여","급여"),("4대보험료","4대보험료"),
+                     ("소득세·지방세","소득세지방세"),("프리랜서","프리랜서"),("프리랜서 세금","프리랜서세금")]:
+        if int(row.get(key, 0)) > 0:
+            pay_rows += dr(lbl, row[key], sub=True)
 
     other_rows = ""
     for cat, amt in sorted(exp_by_cat.items(), key=lambda x: -x[1]):
-        if amt > 0: other_rows += dr(cat, amt, sub=True)
+        if amt > 0:
+            other_rows += dr(cat, amt, sub=True)
 
     exp_html = f"""
     <div class="dp-sec">
       <div class="dp-sec-t">지출 상세</div>
-      {dr('인건비 합계', row['인건비합계'], 'dp-lbl m')}
-      {pay_rows}
-      {dr('기타지출 합계', row['기타지출'], 'dp-lbl m')}
-      {other_rows}
-      {dr('부가세 합계', row['부가세합계'], 'dp-lbl m')}
-      <div class="dp-row tot"><span class="dp-lbl m">총 지출</span><span class="dp-amt c-red">{fn(row['총지출'])}원</span></div>
+      {dr('인건비 합계', row['인건비합계'], bold=True)}
+      {pay_rows if pay_rows else '<div class="dp-row sub"><span class="dp-lbl">내역 없음</span><span class="dp-amt">—</span></div>'}
+      {dr('기타지출 합계', row['기타지출'], bold=True)}
+      {other_rows if other_rows else '<div class="dp-row sub"><span class="dp-lbl">내역 없음</span><span class="dp-amt">—</span></div>'}
+      {dr('부가세 합계', row['부가세합계'], bold=True)}
+      <div class="dp-row tot"><span class="dp-lbl m">총 지출</span>
+        <span class="dp-amt c-red">{fn(row['총지출'])}원</span></div>
     </div>"""
 
     html = f"""
@@ -1217,31 +1254,7 @@ if page == 'dashboard':
         render_rank_cards(view_df)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # PDF Section
-    sec("정산서 내보내기")
-
-    # 지점 선택 (카드 바깥)
-    chk_all = st.checkbox("전체 지점 선택", value=True, key="pdf_all")
-    if chk_all:
-        pdf_branches = view_df[view_df.총매출>0].branch.tolist()
-    else:
-        available = view_df[view_df.총매출>0].branch.tolist()
-        rows_c = [st.columns(4) for _ in range((len(available)+3)//4)]
-        flat   = [c for row_c in rows_c for c in row_c]
-        pdf_branches = [b for b, col in zip(available, flat) if col.checkbox(b, value=True, key=f"pdf_{b}")]
-
-    # 카드 안에 타이틀 + 버튼 (순수 HTML 카드 — base64 다운로드)
-    import base64
-    if pdf_branches:
-        exp_df_pdf   = c_exp(year, month)
-        html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
-        html_b64     = base64.b64encode(html_content.encode("utf-8")).decode()
-        btn_part = f'<a href="data:text/html;base64,{html_b64}" download="정산보고서_{year}년{month}월.html" style="background:#E53935;color:#fff;border-radius:8px;font-weight:600;font-size:14px;padding:10px 22px;text-decoration:none;white-space:nowrap;display:inline-block;box-shadow:0 2px 6px rgba(229,57,53,.35)">정산서 다운로드</a>'
-    else:
-        btn_part = '<span style="background:#ccc;color:#fff;border-radius:8px;font-weight:600;font-size:14px;padding:10px 22px;white-space:nowrap;display:inline-block;cursor:not-allowed">정산서 다운로드</span>'
-
-    card_html = f'<div class="pdf-box" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:14px"><div><div class="pdf-t" style="margin-bottom:6px">📄 정산서 다운로드</div><div style="font-size:12px;color:#888">다운로드 후 브라우저에서 열고 Ctrl+P → PDF 저장</div></div>{btn_part}</div>'
-    st.markdown(card_html, unsafe_allow_html=True)
+    # 정산서는 지점 상세 탭으로 이동됨
 
 # ══════════════════════════════════════════════════════════════════════
 #  2. BRANCH DETAIL
@@ -1267,9 +1280,26 @@ elif page == 'branch':
         full_df = build_summary(year, month)
 
     br_row = full_df[full_df.branch == br_sel]
-    if br_row.empty or br_row.iloc[0]["총매출"] == 0:
-        st.markdown('<div class="al al-warn">⚠️&nbsp; 해당 지점의 데이터가 없습니다.</div>', unsafe_allow_html=True)
-    else:
+    has_data = (not br_row.empty and
+                (br_row.iloc[0]["총매출"] != 0 or br_row.iloc[0]["총지출"] != 0))
+
+    if not has_data:
+        # 매출·지출 모두 없어도 bank_transactions에 데이터가 있으면 표시 시도
+        _rev_check = c_rev(year, month)
+        _exp_check = c_exp(year, month)
+        _has_bank = (not _rev_check.empty and br_sel in _rev_check.branch.values) or \
+                    (not _exp_check.empty and br_sel in _exp_check.branch.values)
+        if not _has_bank:
+            st.markdown('<div class="al al-warn">⚠️&nbsp; 해당 지점의 데이터가 없습니다.</div>', unsafe_allow_html=True)
+        else:
+            has_data = True
+
+    if has_data:
+        if br_row.empty:
+            # 더미 row 생성 (매출 없이 지출만 있는 경우)
+            dummy = {c: 0 for c in full_df.columns}
+            dummy["branch"] = br_sel
+            br_row = pd.DataFrame([dummy])
         render_detail(br_row.iloc[0], year, month)
 
         # 월별 추이 차트
@@ -1277,10 +1307,10 @@ elif page == 'branch':
         months_data = []
         for m in range(1, 13):
             r = build_summary(year, m)
-            row = r[r.branch == br_sel]
-            if not row.empty:
-                months_data.append({"월": f"{m}월", "총매출": row.iloc[0]["총매출"],
-                                    "총지출": row.iloc[0]["총지출"], "손익": row.iloc[0]["손익"]})
+            row_m = r[r.branch == br_sel]
+            if not row_m.empty:
+                months_data.append({"월": f"{m}월", "총매출": row_m.iloc[0]["총매출"],
+                                    "총지출": row_m.iloc[0]["총지출"], "손익": row_m.iloc[0]["손익"]})
             else:
                 months_data.append({"월": f"{m}월", "총매출": 0, "총지출": 0, "손익": 0})
         mdf = pd.DataFrame(months_data)
@@ -1300,6 +1330,49 @@ elif page == 'branch':
                            zeroline=True, zerolinecolor="rgba(31,27,27,.2)"),
             "xaxis":  dict(tickfont=dict(size=11))})
         st.plotly_chart(fig_br, use_container_width=True)
+
+        # ── 정산서 내보내기 ──────────────────────────────
+        sec("정산서 내보내기")
+        st.markdown('<div class="al al-info">ℹ️&nbsp; 포함할 지점을 선택한 후 다운로드하세요. 브라우저에서 열고 Ctrl+P → PDF 저장</div>', unsafe_allow_html=True)
+
+        chk_all_br = st.checkbox("전체 지점 선택", value=False, key="pdf_all_br")
+        if chk_all_br:
+            available_br = [b for b in BRANCH_LIST if full_df[full_df.branch == b].iloc[0]["총매출"] > 0
+                            if not full_df[full_df.branch == b].empty] if not full_df.empty else []
+            pdf_branches = available_br if available_br else [br_sel]
+        else:
+            # 현재 지점 기본 선택, 추가 지점 선택 가능
+            available_br = [b for b in BRANCH_LIST
+                            if not full_df[full_df.branch == b].empty]
+            rows_c = [st.columns(4) for _ in range((len(available_br) + 3) // 4)]
+            flat   = [c for row_c in rows_c for c in row_c]
+            pdf_branches = [b for b, col in zip(available_br, flat)
+                            if col.checkbox(b, value=(b == br_sel), key=f"pdf_br_{b}")]
+
+        import base64 as _b64
+        if pdf_branches:
+            exp_df_pdf   = c_exp(year, month)
+            html_content = gen_pdf_html(full_df, pdf_branches, year, month, exp_df=exp_df_pdf)
+            html_b64     = _b64.b64encode(html_content.encode("utf-8")).decode()
+            btn_part = (f'<a href="data:text/html;base64,{html_b64}" '
+                        f'download="정산보고서_{year}년{month}월.html" '
+                        f'style="background:#E60028;color:#fff;border-radius:8px;font-weight:600;'
+                        f'font-size:14px;padding:10px 22px;text-decoration:none;'
+                        f'white-space:nowrap;display:inline-block;'
+                        f'box-shadow:0 2px 6px rgba(230,0,40,.3)">📄 정산서 다운로드</a>')
+        else:
+            btn_part = ('<span style="background:#ccc;color:#fff;border-radius:8px;font-weight:600;'
+                        'font-size:14px;padding:10px 22px;white-space:nowrap;display:inline-block;'
+                        'cursor:not-allowed">정산서 다운로드</span>')
+
+        st.markdown(
+            f'<div class="pdf-box" style="display:flex;align-items:center;'
+            f'justify-content:space-between;flex-wrap:wrap;gap:14px">'
+            f'<div><div class="pdf-t" style="margin-bottom:4px">📄 정산서 다운로드</div>'
+            f'<div style="font-size:12px;color:#9A918C">선택 지점 {len(pdf_branches)}개 · {year}년 {month}월</div>'
+            f'</div>{btn_part}</div>',
+            unsafe_allow_html=True,
+        )
 
 # ══════════════════════════════════════════════════════════════════════
 #  3. UPLOAD
