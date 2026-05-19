@@ -5,6 +5,37 @@ import sqlite3
 from shared.db import get_conn
 
 
+def _migrate_employees_emp_type(conn):
+    """기존 employees 테이블의 emp_type 제약을 business/tax_exempt 포함으로 마이그레이션"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='employees'"
+    ).fetchone()
+    if not row or "'business'" in row[0]:
+        return
+    conn.executescript("""
+        ALTER TABLE employees RENAME TO _employees_old;
+        CREATE TABLE employees (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT NOT NULL,
+            branch          TEXT NOT NULL,
+            emp_type        TEXT NOT NULL CHECK(emp_type IN ('insured','freelance','business','tax_exempt')),
+            dependents      INTEGER DEFAULT 1,
+            base_salary     INTEGER DEFAULT 0,
+            meal_allowance  INTEGER DEFAULT 0,
+            transport       INTEGER DEFAULT 0,
+            email           TEXT DEFAULT '',
+            id_number       TEXT DEFAULT '',
+            join_date       TEXT DEFAULT '',
+            is_active       INTEGER DEFAULT 1,
+            note            TEXT DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now','localtime'))
+        );
+        INSERT INTO employees SELECT * FROM _employees_old;
+        DROP TABLE _employees_old;
+    """)
+    conn.commit()
+
+
 def init_payroll_tables():
     """급여 시스템 전용 테이블 생성"""
     conn = get_conn()
@@ -15,7 +46,7 @@ def init_payroll_tables():
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             name            TEXT NOT NULL,
             branch          TEXT NOT NULL,
-            emp_type        TEXT NOT NULL CHECK(emp_type IN ('insured','freelance')),
+            emp_type        TEXT NOT NULL CHECK(emp_type IN ('insured','freelance','business','tax_exempt')),
             dependents      INTEGER DEFAULT 1,
             base_salary     INTEGER DEFAULT 0,
             meal_allowance  INTEGER DEFAULT 0,
@@ -95,6 +126,26 @@ def init_payroll_tables():
             UNIQUE(year, month)
         );
 
+        -- 4대보험 실납부 고지액 (공단 고지서 기준)
+        CREATE TABLE IF NOT EXISTS insurance_actuals (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            year          INTEGER NOT NULL,
+            month         INTEGER NOT NULL,
+            employee_name TEXT NOT NULL,
+            employee_id   INTEGER DEFAULT NULL,
+            pension_base  INTEGER DEFAULT 0,
+            pension_emp   INTEGER DEFAULT 0,
+            pension_co    INTEGER DEFAULT 0,
+            health_base   INTEGER DEFAULT 0,
+            health_emp    INTEGER DEFAULT 0,
+            health_co     INTEGER DEFAULT 0,
+            employ_base   INTEGER DEFAULT 0,
+            employ_emp    INTEGER DEFAULT 0,
+            employ_co     INTEGER DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(year, month, employee_name)
+        );
+
         -- 이메일 발송 이력
         CREATE TABLE IF NOT EXISTS email_logs (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,6 +161,7 @@ def init_payroll_tables():
         );
     """)
     conn.commit()
+    _migrate_employees_emp_type(conn)
 
     # 기본 4대보험 요율 (2025년)
     exists = conn.execute("SELECT id FROM insurance_rates WHERE year=2025").fetchone()
@@ -357,6 +409,76 @@ def is_payroll_locked(year: int, month: int) -> bool:
     row  = conn.execute("SELECT id FROM payroll_locks WHERE year=? AND month=?", (year, month)).fetchone()
     conn.close()
     return row is not None
+
+
+# ── 4대보험 실납부 ───────────────────────────────────────────
+def save_insurance_actuals(year: int, month: int, records: list[dict]) -> tuple[int, int]:
+    """공단 고지내역 저장. 반환: (저장 수, 미매칭 수)"""
+    conn      = get_conn()
+    saved     = 0
+    unmatched = 0
+    for rec in records:
+        name   = rec.get("employee_name", "").strip()
+        if not name:
+            continue
+        emp_row = conn.execute(
+            "SELECT id FROM employees WHERE name=? AND is_active=1", (name,)
+        ).fetchone()
+        emp_id = emp_row[0] if emp_row else None
+        if not emp_id:
+            unmatched += 1
+        conn.execute("""
+            INSERT OR REPLACE INTO insurance_actuals
+            (year, month, employee_name, employee_id,
+             pension_base, pension_emp, pension_co,
+             health_base, health_emp, health_co,
+             employ_base, employ_emp, employ_co)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (
+            year, month, name, emp_id,
+            rec.get("pension_base", 0), rec.get("pension_emp", 0), rec.get("pension_co", 0),
+            rec.get("health_base", 0), rec.get("health_emp", 0), rec.get("health_co", 0),
+            rec.get("employ_base", 0), rec.get("employ_emp", 0), rec.get("employ_co", 0),
+        ))
+        saved += 1
+    conn.commit()
+    conn.close()
+    return saved, unmatched
+
+
+def get_insurance_actual(year: int, month: int, employee_id: int) -> dict | None:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM insurance_actuals WHERE year=? AND month=? AND employee_id=?",
+        (year, month, employee_id),
+    )
+    cols = [d[0] for d in cur.description]
+    row  = cur.fetchone()
+    conn.close()
+    return dict(zip(cols, row)) if row else None
+
+
+def get_all_insurance_actuals(year: int, month: int) -> list[dict]:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM insurance_actuals WHERE year=? AND month=? ORDER BY employee_name",
+        (year, month),
+    )
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_insurance_actuals(year: int, month: int) -> bool:
+    try:
+        conn = get_conn()
+        conn.execute("DELETE FROM insurance_actuals WHERE year=? AND month=?", (year, month))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
 
 
 # ── 이메일 로그 ──────────────────────────────────────────────

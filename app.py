@@ -146,7 +146,11 @@ button[data-testid="collapsedControl"]{display:none!important}
 /* ── KPI grid ─────────────────────────────────────────────── */
 .kpi-grid{display:grid;gap:14px;margin-bottom:24px;grid-template-columns:repeat(5,1fr)}
 .kpi{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);
-  padding:18px 20px;box-shadow:var(--sh)}
+  padding:18px 20px;box-shadow:var(--sh);position:relative;overflow:hidden;
+  transition:box-shadow .2s,transform .15s}
+.kpi:hover{box-shadow:var(--shm);transform:translateY(-1px)}
+.kpi::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:linear-gradient(90deg,var(--red),rgba(230,0,40,.3));border-radius:var(--r) var(--r) 0 0}
 .kpi-lbl{font-size:10.5px;color:var(--ink3);font-weight:600;letter-spacing:.05em;text-transform:uppercase}
 .kpi-val{font-size:clamp(17px,2.1vw,30px);font-weight:800;letter-spacing:-.03em;margin-top:10px;
   font-feature-settings:'tnum' 1;line-height:1.05;display:flex;align-items:baseline;gap:4px}
@@ -156,17 +160,17 @@ button[data-testid="collapsedControl"]{display:none!important}
 .c-warn{color:var(--warn)} .c-info{color:var(--info)}
 
 /* ── Section label ────────────────────────────────────────── */
-.sec{display:flex;align-items:center;gap:10px;margin:24px 0 14px}
-.sec-t{font-size:11px;font-weight:700;color:var(--ink3);letter-spacing:.07em;text-transform:uppercase;white-space:nowrap}
-.sec-l{flex:1;height:1px;background:var(--bd)}
+.sec{display:flex;align-items:center;gap:10px;margin:28px 0 16px}
+.sec-t{font-size:10.5px;font-weight:700;color:var(--ink4);letter-spacing:.09em;text-transform:uppercase;white-space:nowrap}
+.sec-l{flex:1;height:1px;background:linear-gradient(90deg,var(--bds),transparent)}
 
 /* ── Branch table ─────────────────────────────────────────── */
 .bt{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);
   overflow:hidden;box-shadow:var(--sh);width:100%}
 .bt table{width:100%;border-collapse:collapse;table-layout:fixed}
-.bt th{padding:10px 16px;background:var(--sf2);border-bottom:2px solid var(--bd);
-  border-right:1px solid var(--bd);font-size:10.5px;color:var(--ink3);font-weight:700;
-  text-transform:uppercase;letter-spacing:.04em;text-align:right;white-space:nowrap}
+.bt th{padding:11px 16px;background:var(--sf2);border-bottom:1px solid var(--bds);
+  border-right:1px solid var(--bd);font-size:10px;color:var(--ink4);font-weight:700;
+  text-transform:uppercase;letter-spacing:.06em;text-align:right;white-space:nowrap}
 .bt th:first-child{text-align:left;width:22%}
 .bt th:last-child{border-right:none;width:24%}
 .bt th:not(:first-child):not(:last-child){width:18%}
@@ -175,7 +179,7 @@ button[data-testid="collapsedControl"]{display:none!important}
 .bt td:first-child{text-align:left;border-right:1px solid var(--bds);font-weight:600;color:var(--ink)}
 .bt td:last-child{border-right:none}
 .bt tr:last-child td{border-bottom:none}
-.bt tr:hover td{background:var(--sf2)}
+.bt tr:hover td{background:var(--sf2);transition:background .12s}
 .bt tr.sel td{background:var(--reds)!important}
 .n{font-feature-settings:'tnum' 1;text-align:right;color:var(--ink2)}
 .bdg{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;
@@ -206,9 +210,9 @@ button[data-testid="collapsedControl"]{display:none!important}
 
 /* ── Chart card ───────────────────────────────────────────── */
 .ch{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);
-  padding:20px 20px 6px;box-shadow:var(--sh);margin-bottom:20px}
-.ch-t{font-size:14px;font-weight:600;color:var(--ink);margin-bottom:2px}
-.ch-s{font-size:11.5px;color:var(--ink3);margin-bottom:8px}
+  padding:20px 20px 8px;box-shadow:var(--sh);margin-bottom:20px}
+.ch-t{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:3px;letter-spacing:-.02em}
+.ch-s{font-size:11px;color:var(--ink3);margin-bottom:10px}
 
 /* ── PDF section ──────────────────────────────────────────── */
 .pdf-box{background:var(--sf);border:1px solid var(--bd);border-radius:var(--r);

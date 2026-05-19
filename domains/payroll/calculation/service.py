@@ -4,9 +4,12 @@ domains/payroll/calculation/service.py — 급여 계산 엔진
 from domains.payroll.db import get_insurance_rates, get_tax_brackets
 
 
-def _lookup_income_tax(taxable: int, dependents: int, tax_year: int = 2025) -> int:
-    """간이세액표 조회. 표가 없으면 간략 계산식으로 대체"""
+def _lookup_income_tax(taxable: int, dependents: int, tax_year: int = 2026) -> int:
+    """간이세액표 조회. 해당 연도 없으면 가장 최근 연도로 fallback, 그것도 없으면 계산식."""
     brackets = get_tax_brackets(tax_year)
+    if not brackets:
+        # fallback: 직전 연도 시도
+        brackets = get_tax_brackets(tax_year - 1)
     dep_col  = f"dependents_{min(dependents, 7)}"
     for b in brackets:
         if b["salary_from"] <= taxable <= b["salary_to"]:
@@ -42,8 +45,8 @@ def calc_insured(employee: dict, year: int, month: int,
     # 과세 기준: 비과세(식대 월 20만, 교통비 월 20만) 제외
     taxable = gross + max(0, meal - 200_000) + max(0, trans - 200_000)
 
-    # 소득세 (간이세액표)
-    income_tax = _lookup_income_tax(taxable, dep)
+    # 소득세 (간이세액표 — 해당 연도, 없으면 최근 연도 fallback)
+    income_tax = _lookup_income_tax(taxable, dep, tax_year=year)
     local_tax  = round(income_tax * 0.1)
 
     # 4대보험 직원 부담분
@@ -79,6 +82,35 @@ def calc_insured(employee: dict, year: int, month: int,
         "company_health": company_health,
         "company_employ": company_employ,
         "company_accident": company_accident,
+        "status": "draft",
+    }
+
+
+def calc_business(employee: dict, year: int, month: int, payment: int) -> dict:
+    """
+    일반사업자/면세사업자 지급 처리.
+    계산서 발행 기준 — 별도 세금 공제 없음.
+    """
+    return {
+        "year": year, "month": month,
+        "employee_id": employee["id"],
+        "branch": employee["branch"],
+        "emp_type": employee["emp_type"],
+        "gross_pay": payment,
+        "meal_allowance": 0,
+        "transport": 0,
+        "taxable_base": 0,
+        "income_tax": 0,
+        "local_tax": 0,
+        "pension_emp": 0,
+        "health_emp": 0,
+        "employ_emp": 0,
+        "total_deduction": 0,
+        "net_pay": payment,
+        "company_pension": 0,
+        "company_health": 0,
+        "company_employ": 0,
+        "company_accident": 0,
         "status": "draft",
     }
 
