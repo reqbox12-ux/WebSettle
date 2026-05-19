@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 from modules.db import (
     init_db, load_keyword_rules,
     upsert_card_sales, upsert_bank_transactions, upsert_payroll,
+    upsert_insurance_payments, get_insurance_summary,
     get_card_by_branch, get_branch_cash_revenue,
     get_expense_by_category, get_revenue_by_category, get_payroll_summary,
     get_unreviewed_transactions, get_all_bank_transactions,
@@ -21,6 +22,7 @@ from modules.parser import (
     parse_hana, parse_shinhan,
     parse_bank_auto, recalc_vat,
     parse_payroll_freelance, parse_payroll_insured,
+    parse_insurance_excel,
 )
 from modules.classifier import classify_transactions, add_rule
 from modules.auth import (
@@ -694,10 +696,13 @@ def c_pay(y, m):  return get_payroll_summary(y, m)
 def c_exp(y, m):  return get_expense_by_category(y, m)
 @st.cache_data(ttl=300, show_spinner=False)
 def c_rev(y, m):  return get_revenue_by_category(y, m)
+@st.cache_data(ttl=300, show_spinner=False)
+def c_ins(y, m):  return get_insurance_summary(y, m)
 
 def build_summary(year, month):
     card_df = c_card(year, month); cash_df = c_cash(year, month)
     pay_df  = c_pay(year, month);  exp_df  = c_exp(year, month)
+    ins_df  = c_ins(year, month)
 
     def s(df, col): return df.set_index("branch")[col] if not df.empty else pd.Series(dtype=float)
 
@@ -715,6 +720,10 @@ def build_summary(year, month):
     else:
         ins=ins4=ins_t=frl=frl_t=frl_l = pd.Series(dtype=float)
 
+    # 4대보험 본사부담금 (별도 테이블)
+    ins_co  = s(ins_df, "company_insurance")  if not ins_df.empty else pd.Series(dtype=float)
+    ins_emp = s(ins_df, "employee_insurance") if not ins_df.empty else pd.Series(dtype=float)
+
     pc = {"급여","4대보험료","소득세·지방세 합계","프리랜서","퇴직금"}
     other = (exp_df[~exp_df.category.isin(pc)].groupby("branch")["amount"].sum()
              if not exp_df.empty else pd.Series(dtype=float))
@@ -725,10 +734,13 @@ def build_summary(year, month):
     r["현금VAT"]     = cash_vat; r["현금공급가액"] = cash_sup
     r["총매출"]      = r["카드실수령"].fillna(0) + r["현금공급가액"].fillna(0)
     r["부가세합계"]   = r["카드VAT"].fillna(0) + r["현금VAT"].fillna(0)
-    r["급여"]=ins; r["4대보험료"]=ins4; r["소득세지방세"]=ins_t
+    r["급여"]=ins; r["4대보험료_직원"]=ins4; r["소득세지방세"]=ins_t
+    r["4대보험_본사"]=ins_co; r["4대보험_직원"]=ins_emp
     r["프리랜서"]=frl; r["프리랜서세금"]=frl_t+frl_l; r["기타지출"]=other
     r = r.fillna(0)
-    r["인건비합계"] = r["급여"]+r["4대보험료"]+r["소득세지방세"]+r["프리랜서"]+r["프리랜서세금"]
+    # 인건비합계: 급여(net) + 직원부담보험(=급여명세서 공제분) + 소득세 + 프리랜서 + 본사부담보험
+    r["인건비합계"] = (r["급여"] + r["4대보험료_직원"] + r["소득세지방세"]
+                    + r["프리랜서"] + r["프리랜서세금"] + r["4대보험_본사"])
     r["총지출"]     = r["부가세합계"]+r["인건비합계"]+r["기타지출"]
     r["손익"]       = r["총매출"]-r["총지출"]
     r["이익률"]     = r.apply(lambda x: round(x["손익"]/x["총매출"]*100,1) if x["총매출"]>0 else 0, axis=1)
@@ -911,8 +923,14 @@ def render_detail(row, year, month):
         exp_by_cat = br_exp.groupby("category")["amount"].sum().to_dict()
 
     pay_rows = ""
-    for lbl, key in [("급여","급여"),("4대보험료","4대보험료"),
-                     ("소득세·지방세","소득세지방세"),("프리랜서","프리랜서"),("프리랜서 세금","프리랜서세금")]:
+    for lbl, key in [
+        ("급여 (실수령)",       "급여"),
+        ("4대보험료 (직원부담)","4대보험료_직원"),
+        ("4대보험료 (본사부담)","4대보험_본사"),
+        ("소득세·지방세",       "소득세지방세"),
+        ("프리랜서",            "프리랜서"),
+        ("프리랜서 세금",       "프리랜서세금"),
+    ]:
         if int(row.get(key, 0)) > 0:
             pay_rows += dr(lbl, row[key], sub=True)
 
@@ -1092,8 +1110,9 @@ def gen_pdf_html(df, branches, year, month, exp_df=None, rev_df=None):
             <tr class="bold"><td>현금 공급가액</td><td class="amt">{fn(row['현금공급가액'])} 원</td></tr>
             <tr class="bold total"><td>총 매출</td><td class="amt">{fn(row['총매출'])} 원</td></tr>
             <tr class="sec-head"><th colspan="2">[ 인건비 ]</th></tr>
-            <tr class="sub"><td>&nbsp;&nbsp;급여</td><td class="amt">{fn(row['급여'])} 원</td></tr>
-            <tr class="sub"><td>&nbsp;&nbsp;4대보험료</td><td class="amt">{fn(row['4대보험료'])} 원</td></tr>
+            <tr class="sub"><td>&nbsp;&nbsp;급여 (실수령)</td><td class="amt">{fn(row['급여'])} 원</td></tr>
+            <tr class="sub"><td>&nbsp;&nbsp;4대보험료 (직원부담)</td><td class="amt">{fn(row['4대보험료_직원'])} 원</td></tr>
+            <tr class="sub"><td>&nbsp;&nbsp;4대보험료 (본사부담)</td><td class="amt">{fn(row['4대보험_본사'])} 원</td></tr>
             <tr class="sub"><td>&nbsp;&nbsp;소득세·지방세</td><td class="amt">{fn(row['소득세지방세'])} 원</td></tr>
             <tr class="sub"><td>&nbsp;&nbsp;프리랜서</td><td class="amt">{fn(row['프리랜서'])} 원</td></tr>
             <tr class="sub"><td>&nbsp;&nbsp;프리랜서 세금</td><td class="amt">{fn(row['프리랜서세금'])} 원</td></tr>
@@ -1202,13 +1221,14 @@ if page == 'dashboard':
             "카드실수령":   "카드실수령",
             "현금공급가액": "현금공급가액",
             "현금VAT":      "현금VAT",
-            "총매출":       "총매출",
-            "급여":         "급여",
-            "4대보험료":    "4대보험료",
-            "소득세지방세": "소득세·지방세",
-            "프리랜서":     "프리랜서",
-            "프리랜서세금": "프리랜서세금",
-            "인건비합계":   "인건비합계",
+            "총매출":           "총매출",
+            "급여":             "급여",
+            "4대보험료_직원":   "4대보험(직원)",
+            "4대보험_본사":     "4대보험(본사)",
+            "소득세지방세":     "소득세·지방세",
+            "프리랜서":         "프리랜서",
+            "프리랜서세금":     "프리랜서세금",
+            "인건비합계":       "인건비합계",
             "기타지출":     "기타지출",
             "부가세합계":   "부가세합계",
             "총지출":       "총지출",
@@ -1551,24 +1571,83 @@ elif page == 'upload':
 
     with tab3:
         st.subheader("인건비 업로드")
-        c1, c2 = st.columns(2)
-        py = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="py")
-        pm = c2.selectbox("월", list(range(1,13)), index=_now.month-1, key="pm", format_func=lambda m: f"{m}월")
-        fp = st.file_uploader("지점별 대시보드.xlsx", type=["xlsx"], key="pay")
-        if fp and st.button("저장", type="primary", key="b_pay"):
-            with st.spinner("처리 중..."):
-                xl2 = pd.ExcelFile(fp)
-                saved_pay = False
-                for fn_parse, typ, lbl in [(parse_payroll_freelance,"freelance","프리랜서"), (parse_payroll_insured,"insured","4대보험")]:
+
+        ptab1, ptab2 = st.tabs(["📋 급여 (지점별 대시보드)", "🛡️ 4대보험 부담금"])
+
+        with ptab1:
+            c1, c2 = st.columns(2)
+            py = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="py")
+            pm = c2.selectbox("월", list(range(1,13)), index=_now.month-1, key="pm", format_func=lambda m: f"{m}월")
+            fp = st.file_uploader("지점별 대시보드.xlsx", type=["xlsx"], key="pay")
+            if fp and st.button("저장", type="primary", key="b_pay"):
+                with st.spinner("처리 중..."):
+                    xl2 = pd.ExcelFile(fp)
+                    saved_pay = False
+                    for fn_parse, typ, lbl in [(parse_payroll_freelance,"freelance","프리랜서"), (parse_payroll_insured,"insured","4대보험")]:
+                        try:
+                            df = fn_parse(xl2, py, pm)
+                            upsert_payroll(df, py, pm, typ)
+                            st.success(f"✅ {lbl}: {len(df)}개 지점")
+                            saved_pay = True
+                        except Exception as e:
+                            st.error(f"❌ {lbl}: {e}")
+                    if saved_pay:
+                        st.cache_data.clear()
+
+        with ptab2:
+            st.markdown("""
+            <div style='background:var(--infos);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:13px;color:var(--info)'>
+            <b>4대보험 부담금 업로드 안내</b><br>
+            • <b>국민연금</b>: 고지서의 사업장 부담금 / 가입자 부담금 각각 입력<br>
+            • <b>건강보험</b>: 합산 금액만 입력 (자동으로 50/50 분할 처리)<br>
+            • <b>고용보험</b>: 고지서의 사업주 부담 / 피보험자 부담 각각 입력<br>
+            • <b>산재보험</b>: 전액 본사 부담 — 고지서 금액 그대로 입력
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 양식 다운로드
+            tpl_path = Path("templates/4대보험_입력양식.xlsx")
+            if tpl_path.exists():
+                with open(tpl_path, "rb") as tf:
+                    st.download_button(
+                        "📥 입력 양식 다운로드",
+                        tf.read(),
+                        file_name="4대보험_입력양식.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="dl_ins_tpl"
+                    )
+
+            c1i, c2i = st.columns(2)
+            iy = c1i.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="iy")
+            im = c2i.selectbox("월", list(range(1,13)), index=_now.month-1, key="im", format_func=lambda m: f"{m}월")
+            fp_ins = st.file_uploader("4대보험_입력양식.xlsx (작성 완료 파일)", type=["xlsx"], key="ins_upload")
+            if fp_ins and st.button("저장", type="primary", key="b_ins"):
+                with st.spinner("처리 중..."):
                     try:
-                        df = fn_parse(xl2, py, pm)
-                        upsert_payroll(df, py, pm, typ)
-                        st.success(f"✅ {lbl}: {len(df)}개 지점")
-                        saved_pay = True
+                        xl_ins = pd.ExcelFile(fp_ins)
+                        df_ins = parse_insurance_excel(xl_ins)
+                        upsert_insurance_payments(df_ins, iy, im)
+                        st.success(f"✅ 4대보험 부담금: {len(df_ins)}개 지점 저장 완료")
+                        # 미리보기
+                        df_ins["본사부담(계산)"] = (
+                            df_ins["pension_co"]
+                            + df_ins["health_total"] // 2
+                            + df_ins["employ_co"]
+                            + df_ins["accident"]
+                        ).apply(lambda x: f"{x:,}")
+                        df_ins["직원부담(계산)"] = (
+                            df_ins["pension_emp"]
+                            + df_ins["health_total"] - df_ins["health_total"] // 2
+                            + df_ins["employ_emp"]
+                        ).apply(lambda x: f"{x:,}")
+                        st.dataframe(
+                            df_ins[["branch","본사부담(계산)","직원부담(계산)"]].rename(
+                                columns={"branch":"지점"}),
+                            use_container_width=True, hide_index=True
+                        )
+                        st.cache_data.clear()
                     except Exception as e:
-                        st.error(f"❌ {lbl}: {e}")
-                if saved_pay:
-                    st.cache_data.clear()
+                        st.error(f"❌ 저장 실패: {e}")
 
 # ══════════════════════════════════════════════════════════════════════
 #  3. RULES

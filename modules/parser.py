@@ -420,3 +420,64 @@ def parse_payroll_insured(xl: pd.ExcelFile, year: int, month: int) -> pd.DataFra
             "local_tax": 0, "headcount": headcount,
         })
     return pd.DataFrame(rows)
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  4대보험 본사/직원 부담 파서
+# ══════════════════════════════════════════════════════════════════════
+
+_INS_COLS = {
+    "지점":       "branch",
+    "국민연금_본사": "pension_co",
+    "국민연금_직원": "pension_emp",
+    "건강보험_합산": "health_total",
+    "고용보험_본사": "employ_co",
+    "고용보험_직원": "employ_emp",
+    "산재보험":    "accident",
+}
+
+def parse_insurance_excel(xl: pd.ExcelFile) -> pd.DataFrame:
+    """4대보험 지점별 입력 양식 파싱.
+
+    시트명: '4대보험' 또는 첫 번째 시트.
+    헤더 행: 지점 | 국민연금_본사 | 국민연금_직원 | 건강보험_합산 | 고용보험_본사 | 고용보험_직원 | 산재보험
+
+    건강보험은 합산만 입력하면 본사/직원 각 50% 로 자동 분할.
+    """
+    sheet = "4대보험" if "4대보험" in xl.sheet_names else xl.sheet_names[0]
+
+    # 헤더 행 자동 감지: 첫 번째 열에 '지점'이 있는 행을 헤더로 사용
+    df_probe = xl.parse(sheet, header=None)
+    header_row = 0
+    for idx in range(min(5, len(df_probe))):
+        cell = str(df_probe.iloc[idx, 0]).strip()
+        if cell in ("지점", "branch"):
+            header_row = idx
+            break
+
+    df_raw = xl.parse(sheet, header=header_row)
+
+    # 컬럼명 한글 → 내부 영문 매핑
+    rename = {k: v for k, v in _INS_COLS.items() if k in df_raw.columns}
+    df = df_raw.rename(columns=rename)
+
+    required = ["branch", "pension_co", "pension_emp", "health_total",
+                "employ_co", "employ_emp", "accident"]
+    missing = [c for c in required if c not in df.columns]
+    if missing:
+        raise ValueError(f"4대보험 양식에 필수 컬럼 없음: {missing}")
+
+    # 숫자 정제 (설명 텍스트 행 제거 포함)
+    for col in required[1:]:
+        df[col] = pd.to_numeric(
+            df[col].astype(str).str.replace(",", "").str.strip(),
+            errors="coerce"
+        ).fillna(0).astype(int)
+
+    # 빈 지점 행 + 합계 행 제거
+    df = df.dropna(subset=["branch"])
+    df["branch"] = df["branch"].astype(str).str.strip()
+    df = df[df["branch"].str.len() > 0]
+    df = df[~df["branch"].isin(["지점명", "합  계", "합계", "계"])]
+
+    return df[required].reset_index(drop=True)

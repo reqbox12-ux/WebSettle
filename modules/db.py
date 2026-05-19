@@ -136,6 +136,21 @@ def init_db():
                     expires_at BIGINT NOT NULL
                 )
             """)
+            c.execute("""
+                CREATE TABLE IF NOT EXISTS insurance_payments (
+                    id           SERIAL PRIMARY KEY,
+                    year         INTEGER,
+                    month        INTEGER,
+                    branch       TEXT,
+                    pension_co   INTEGER DEFAULT 0,
+                    pension_emp  INTEGER DEFAULT 0,
+                    health_total INTEGER DEFAULT 0,
+                    employ_co    INTEGER DEFAULT 0,
+                    employ_emp   INTEGER DEFAULT 0,
+                    accident     INTEGER DEFAULT 0,
+                    UNIQUE(year, month, branch)
+                )
+            """)
             conn.commit()
         except Exception as e:
             conn.rollback()
@@ -207,6 +222,20 @@ def init_db():
                 token      TEXT PRIMARY KEY,
                 username   TEXT NOT NULL,
                 expires_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS insurance_payments (
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                year         INTEGER,
+                month        INTEGER,
+                branch       TEXT,
+                pension_co   INTEGER DEFAULT 0,
+                pension_emp  INTEGER DEFAULT 0,
+                health_total INTEGER DEFAULT 0,
+                employ_co    INTEGER DEFAULT 0,
+                employ_emp   INTEGER DEFAULT 0,
+                accident     INTEGER DEFAULT 0,
+                UNIQUE(year, month, branch)
             );
         """)
         # SQLite 마이그레이션
@@ -643,6 +672,97 @@ def get_payroll_summary(year: int, month: int = None, branch: str = None):
             GROUP BY branch, month, type
         """
         df = pd.read_sql(query, conn, params=params)
+        conn.close()
+        return df
+
+
+# ── 4대보험 본사/직원 부담 ────────────────────────────────────────
+
+def upsert_insurance_payments(df: pd.DataFrame, year: int, month: int):
+    """4대보험 지점별 본사/직원 부담 upsert (연월 기준 교체)"""
+    conn = get_conn()
+    c = conn.cursor()
+
+    if USE_POSTGRES:
+        c.execute(
+            "DELETE FROM insurance_payments WHERE year=%s AND month=%s",
+            (year, month)
+        )
+        conn.commit()
+        df = df.copy()
+        df["year"] = year
+        df["month"] = month
+        df.to_sql("insurance_payments", conn, if_exists="append", index=False,
+                  method="multi")
+    else:
+        c.execute(
+            "DELETE FROM insurance_payments WHERE year=? AND month=?",
+            (year, month)
+        )
+        conn.commit()
+        df = df.copy()
+        df["year"] = year
+        df["month"] = month
+        df.to_sql("insurance_payments", conn, if_exists="append", index=False)
+
+    conn.commit()
+    conn.close()
+
+
+def get_insurance_summary(year: int, month: int = None, branch: str = None) -> pd.DataFrame:
+    """지점별 보험료 본사·직원 부담 합계 반환
+
+    반환 컬럼:
+      branch, company_insurance, employee_insurance
+      (건강보험은 health_total ÷ 2 로 배분)
+    """
+    if USE_POSTGRES:
+        filters = ["year=:year"]
+        params: dict = {"year": year}
+        if month:
+            filters.append("month=:month"); params["month"] = month
+        if branch:
+            filters.append("branch=:branch"); params["branch"] = branch
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch,
+                   SUM(pension_co + FLOOR(health_total/2.0) + employ_co + accident)  AS company_insurance,
+                   SUM(pension_emp + CEIL(health_total/2.0)  + employ_emp)            AS employee_insurance,
+                   SUM(pension_co)    AS pension_co,
+                   SUM(pension_emp)   AS pension_emp,
+                   SUM(health_total)  AS health_total,
+                   SUM(employ_co)     AS employ_co,
+                   SUM(employ_emp)    AS employ_emp,
+                   SUM(accident)      AS accident
+            FROM insurance_payments
+            WHERE {where}
+            GROUP BY branch
+        """
+        return pd.read_sql(text(query), engine, params=params)
+    else:
+        conn = get_conn()
+        filters = ["year=?"]
+        params_list: list = [year]
+        if month:
+            filters.append("month=?"); params_list.append(month)
+        if branch:
+            filters.append("branch=?"); params_list.append(branch)
+        where = " AND ".join(filters)
+        query = f"""
+            SELECT branch,
+                   SUM(pension_co + CAST(health_total/2 AS INTEGER) + employ_co + accident)  AS company_insurance,
+                   SUM(pension_emp + (health_total - CAST(health_total/2 AS INTEGER)) + employ_emp) AS employee_insurance,
+                   SUM(pension_co)    AS pension_co,
+                   SUM(pension_emp)   AS pension_emp,
+                   SUM(health_total)  AS health_total,
+                   SUM(employ_co)     AS employ_co,
+                   SUM(employ_emp)    AS employ_emp,
+                   SUM(accident)      AS accident
+            FROM insurance_payments
+            WHERE {where}
+            GROUP BY branch
+        """
+        df = pd.read_sql(query, conn, params=params_list)
         conn.close()
         return df
 
