@@ -65,27 +65,50 @@ def validate_token(token: str) -> str | None:
 
 def init_users_table():
     """users 테이블 생성 + 기본 admin 계정 없으면 생성"""
+    from modules.db import USE_POSTGRES
     conn = get_conn()
     c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            username   TEXT UNIQUE NOT NULL,
-            name       TEXT NOT NULL,
-            password   TEXT NOT NULL,
-            role       TEXT DEFAULT 'user',
-            created_at TEXT DEFAULT (datetime('now','localtime'))
-        )
-    """)
-    conn.commit()
-    row = conn.execute("SELECT id FROM users WHERE username='admin'").fetchone()
-    if not row:
-        pw_hash = bcrypt.hashpw("Admin1234!".encode(), bcrypt.gensalt()).decode()
-        c.execute(
-            "INSERT INTO users (username, name, password, role) VALUES (?,?,?,?)",
-            ("admin", "관리자", pw_hash, "admin")
-        )
+
+    if USE_POSTGRES:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id         SERIAL PRIMARY KEY,
+                username   TEXT UNIQUE NOT NULL,
+                name       TEXT NOT NULL,
+                password   TEXT NOT NULL,
+                role       TEXT DEFAULT 'user',
+                created_at TEXT DEFAULT (to_char(now(), 'YYYY-MM-DD HH24:MI:SS'))
+            )
+        """)
         conn.commit()
+        row = conn.execute("SELECT id FROM users WHERE username='admin'").fetchone()
+        if not row:
+            pw_hash = bcrypt.hashpw("Admin1234!".encode(), bcrypt.gensalt()).decode()
+            c.execute(
+                "INSERT INTO users (username, name, password, role) VALUES (%s,%s,%s,%s)",
+                ("admin", "관리자", pw_hash, "admin")
+            )
+    else:
+        c.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id         INTEGER PRIMARY KEY AUTOINCREMENT,
+                username   TEXT UNIQUE NOT NULL,
+                name       TEXT NOT NULL,
+                password   TEXT NOT NULL,
+                role       TEXT DEFAULT 'user',
+                created_at TEXT DEFAULT (datetime('now','localtime'))
+            )
+        """)
+        conn.commit()
+        row = conn.execute("SELECT id FROM users WHERE username='admin'").fetchone()
+        if not row:
+            pw_hash = bcrypt.hashpw("Admin1234!".encode(), bcrypt.gensalt()).decode()
+            c.execute(
+                "INSERT INTO users (username, name, password, role) VALUES (?,?,?,?)",
+                ("admin", "관리자", pw_hash, "admin")
+            )
+
+    conn.commit()
     conn.close()
 
 
