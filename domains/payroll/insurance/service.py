@@ -132,7 +132,7 @@ def parse_employment(file) -> tuple[list[dict], list[str]]:
 
         for _, row in df_filt.iterrows():
             name = str(row[col_name]).strip()
-            if not name or name == "nan":
+            if not name or name in ("nan", "합계"):
                 continue
             try:
                 base    = _to_int(row[col_base])
