@@ -122,9 +122,23 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         br_exp = exp_df[exp_df.branch == b]
         exp_by_cat = br_exp.groupby("category")["amount"].sum().to_dict()
 
+    # 월별 수동입력 매출 (해당 지점)
+    from domains.branch.db import get_branch_monthly_revenue as _get_bmr
+    _bmr_list = _get_bmr(year, month)
+    bmr_data: dict = next((r for r in _bmr_list if r.get("branch") == b), {})
+
     CARD_CATS = ["PT매출(카드)", "GX매출(카드)", "골프매출(카드)", "키즈매출(카드)", "기타매출(카드)"]
     CASH_CATS = ["PT매출(현금)", "GX매출(현금)", "골프매출(현금)", "키즈매출(현금)", "기타매출(현금)",
                  "도급비", "시설상환비", "카페매출"]
+    BMR_LABELS = [
+        ("dogeub",       "도급비(입력)"),
+        ("pt_sales",     "PT매출(입력)"),
+        ("gx_sales",     "GX매출(입력)"),
+        ("cafe_sales",   "카페매출(입력)"),
+        ("golf_sales",   "골프매출(입력)"),
+        ("facility_fee", "시설상환비(입력)"),
+        ("other_sales",  "기타매출(입력)"),
+    ]
 
     def _row(lbl, amt, indent=False, bold=False, cls=""):
         style_lbl = "color:var(--ink3);padding-left:20px" if indent else "color:var(--ink);font-weight:600" if bold else "color:var(--ink2)"
@@ -156,6 +170,15 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         rev_html += _row("부가세 차감", -int(row["현금VAT"]), indent=True)
     rev_html += _row("현금 공급가액", row["현금공급가액"], bold=True)
 
+    # 수동입력 매출 섹션
+    bmr_total = int(row.get("수동입력매출", 0))
+    if bmr_total > 0:
+        for db_col, label in BMR_LABELS:
+            v = int(bmr_data.get(db_col, 0) or 0)
+            if v > 0:
+                rev_html += _row(label, v, indent=True)
+        rev_html += _row("직접입력 매출", bmr_total, bold=True)
+
     # 총매출 합계
     rev_html += (
         f'<div style="display:flex;justify-content:space-between;align-items:center;'
@@ -174,6 +197,7 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         ("소득세·지방세",        "소득세지방세"),
         ("프리랜서",             "프리랜서"),
         ("프리랜서 세금",        "프리랜서세금"),
+        ("카페인건비",           "카페인건비"),
     ]
     for lbl, key in PAY_ITEMS:
         v = int(row.get(key, 0))
