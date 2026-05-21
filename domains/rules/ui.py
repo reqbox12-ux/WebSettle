@@ -100,60 +100,83 @@ def render_page():
 
             st.divider()
 
-            def _status_badge(row):
+            def _status_label(row):
                 src = str(row.get("classification_source", "") or "")
-                if row.get("is_excluded", 0) == 1:   return "⛔ 제외"
-                if src == "rule":                      return "✅ 자동"
-                if src == "smart":                     return "🔵 스마트"
-                if src == "ai":                        return "🤖 AI"
-                if src == "manual":                    return "✏️ 수동"
-                if row.get("needs_review", 0) == 1:   return "❓ 미분류"
+                if row.get("is_excluded", 0) == 1:  return "⛔ 제외"
+                if src == "rule":                     return "✅ 자동"
+                if src == "smart":                    return "🔵 스마트"
+                if src == "ai":                       return "🤖 AI"
+                if src == "manual":                   return "✏️ 수동"
+                if row.get("needs_review", 0) == 1:  return "❓ 미분류"
                 return "✅ 분류됨"
 
+            import pandas as pd
+
+            # 표시용 DataFrame 구성
+            disp_rows = []
+            id_map = []   # row 순서 → 실제 tx id, bank 매핑
             for _, row in rv_df.iterrows():
-                amt      = int(row.get("deposit", 0) or 0) or int(row.get("withdrawal", 0) or 0)
-                tp       = "입금" if int(row.get("deposit", 0) or 0) > 0 else "출금"
-                badge    = _status_badge(row)
-                bank_lbl = str(row.get("bank", "")).upper()
-                date_lbl = str(row.get("tx_date", ""))[:10]
-                desc_lbl = str(row.get("description", ""))[:30]
-                lbl = f"{badge}  [{bank_lbl}] {date_lbl}  ·  {desc_lbl}  ·  {tp} {amt:,}원"
+                amt = int(row.get("deposit", 0) or 0) or -int(row.get("withdrawal", 0) or 0)
+                disp_rows.append({
+                    "상태":    _status_label(row),
+                    "날짜":    str(row.get("tx_date", ""))[:10],
+                    "통장":    str(row.get("bank", "")).upper(),
+                    "적요":    str(row.get("description", ""))[:40],
+                    "금액":    amt,
+                    "지점":    str(row.get("branch", "") or ""),
+                    "계정과목": str(row.get("category", "") or ""),
+                })
+                id_map.append({"id": int(row["id"]), "bank": str(row.get("bank", ""))})
 
-                with st.expander(lbl, expanded=(row.get("needs_review", 0) == 1)):
-                    cur_branch  = str(row.get("branch", "") or "")
-                    cur_cat     = str(row.get("category", "") or "")
-                    counterpart = str(row.get("counterpart", "") or "")
-                    content     = str(row.get("content", "") or "")
-                    if counterpart or content:
-                        st.caption(f"의뢰인/수취인: {counterpart}  |  내용: {content}")
+            rv_edit_df = pd.DataFrame(disp_rows)
+            cat_opts = [""] + ALL_CATEGORIES
 
-                    ci1, ci2, ci3, ci4 = st.columns([2, 2, 1, 1])
-                    br_idx  = BRANCH_LIST.index(cur_branch) if cur_branch in BRANCH_LIST else 0
-                    new_br  = ci1.selectbox("지점", BRANCH_LIST, index=br_idx, key=f"rv_br_{row.id}")
-                    cat_opts = [""] + ALL_CATEGORIES
-                    cat_idx  = cat_opts.index(cur_cat) if cur_cat in cat_opts else 0
-                    new_ct  = ci2.selectbox("계정과목", cat_opts, index=cat_idx, key=f"rv_ct_{row.id}")
+            edited_rv = st.data_editor(
+                rv_edit_df,
+                use_container_width=True,
+                hide_index=True,
+                height=520,
+                num_rows="fixed",
+                key="rv_editor_table",
+                column_config={
+                    "상태":    st.column_config.TextColumn("상태", disabled=True, width="small"),
+                    "날짜":    st.column_config.TextColumn("날짜", disabled=True, width="small"),
+                    "통장":    st.column_config.TextColumn("통장", disabled=True, width="small"),
+                    "적요":    st.column_config.TextColumn("적요", disabled=True, width="large"),
+                    "금액":    st.column_config.NumberColumn("금액", disabled=True, format="%d",
+                                                              width="medium"),
+                    "지점":    st.column_config.SelectboxColumn("지점", options=BRANCH_LIST,
+                                                                width="medium"),
+                    "계정과목": st.column_config.SelectboxColumn("계정과목", options=cat_opts,
+                                                                  width="medium"),
+                },
+            )
+            st.caption("지점·계정과목 셀을 클릭해 수정 → 저장 버튼 한 번으로 일괄 반영")
 
-                    if ci3.button("저장", key=f"rv_sv_{row.id}", type="primary"):
-                        if new_br and new_ct:
-                            kw = ai_extract_keyword(
-                                str(row.get("description", "")), counterpart, new_br, new_ct, _api_key
-                            ) if _api_key else str(row.get("description", ""))
-                            update_transaction_classification(int(row.id), new_br, new_ct, "manual")
-                            add_rule(str(row.bank), kw, new_br, new_ct)
-                            st.success(f"저장 완료! (규칙 키워드: '{kw}')")
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.error("지점과 계정과목을 모두 선택하세요.")
-
-                    if ci4.button("제외", key=f"rv_ex_{row.id}"):
-                        kw_ex = ai_extract_keyword(
-                            str(row.get("description", "")), counterpart, cur_branch or "본사", "제외", _api_key
-                        ) if _api_key else str(row.get("description", ""))
-                        update_transaction_classification(int(row.id), cur_branch or "본사", "제외", "manual")
-                        add_rule(str(row.bank), kw_ex, cur_branch or "본사", "제외")
+            if st.button("💾 변경사항 저장", key="rv_bulk_save", type="primary"):
+                changes = st.session_state.get("rv_editor_table", {}).get("edited_rows", {})
+                if not changes:
+                    st.info("변경된 내용이 없습니다.")
+                else:
+                    saved_rv = 0
+                    errs_rv  = []
+                    for row_idx_str, row_changes in changes.items():
+                        idx  = int(row_idx_str)
+                        info = id_map[idx]
+                        # 변경 후 현재 값 (변경 없으면 원본 유지)
+                        cur_br  = row_changes.get("지점",    disp_rows[idx]["지점"])
+                        cur_cat = row_changes.get("계정과목", disp_rows[idx]["계정과목"])
+                        if not cur_br or not cur_cat:
+                            errs_rv.append(f"행 {idx + 1}: 지점·계정과목 모두 필요합니다.")
+                            continue
+                        update_transaction_classification(info["id"], cur_br, cur_cat, "manual")
+                        saved_rv += 1
+                    if saved_rv:
+                        st.success(f"✅ {saved_rv}건 저장 완료")
+                        st.cache_data.clear()
                         st.rerun()
+                    for e in errs_rv:
+                        st.warning(e)
 
     # ── 탭2: 규칙 목록 · 추가 ─────────────────────────────
     with tab2:

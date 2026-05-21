@@ -4,8 +4,8 @@ domains/payroll/employee/ui.py — 직원 마스터 관리 UI
 import streamlit as st
 import pandas as pd
 
-from shared.config import BRANCH_LIST
 from shared.utils import sec
+from domains.branch.db import get_active_branch_names
 from domains.payroll.db import (
     get_all_employees, get_employees_by_branch,
     upsert_employee, delete_employee,
@@ -27,6 +27,7 @@ EMP_TYPE_SHORT = {
 
 
 def render():
+    BRANCH_LIST = get_active_branch_names()
     sec("직원 마스터")
 
     tab_list, tab_add, tab_import = st.tabs(["직원 목록", "직원 추가/수정", "엑셀 일괄 등록"])

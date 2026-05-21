@@ -11,6 +11,7 @@ from shared.db import init_db, load_keyword_rules
 from domains.auth.service import init_users_table, get_session_user, delete_session
 from domains.auth.ui import show_login
 from domains.payroll.db import init_payroll_tables
+from domains.branch.db import init_branch_tables
 from shared.utils import get_logo_html
 
 # ── 앱 기본 설정 ──────────────────────────────────────────────
@@ -25,6 +26,7 @@ init_db()
 load_keyword_rules()
 init_users_table()
 init_payroll_tables()
+init_branch_tables()
 
 # ── 글로벌 CSS ────────────────────────────────────────────────
 st.markdown("""
