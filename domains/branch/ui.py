@@ -137,6 +137,7 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         ("cafe_sales",   "카페매출(입력)"),
         ("golf_sales",   "골프매출(입력)"),
         ("facility_fee", "시설상환비(입력)"),
+        ("cafe_labor",   "카페인건비(입력)"),
         ("other_sales",  "기타매출(입력)"),
     ]
 
@@ -197,7 +198,6 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         ("소득세·지방세",        "소득세지방세"),
         ("프리랜서",             "프리랜서"),
         ("프리랜서 세금",        "프리랜서세금"),
-        ("카페인건비",           "카페인건비"),
     ]
     for lbl, key in PAY_ITEMS:
         v = int(row.get(key, 0))

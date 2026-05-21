@@ -10,9 +10,9 @@ from shared.db import (
 from shared.config import BRANCH_LIST
 from domains.branch.db import get_branch_monthly_revenue
 
-# 월별 수동입력 매출 컬럼 (카페인건비 제외)
+# 월별 수동입력 매출 컬럼 (카페인건비 포함 — 아파트에서 받는 매출)
 _BMR_REVENUE_COLS = ["dogeub", "pt_sales", "gx_sales", "cafe_sales",
-                     "golf_sales", "facility_fee", "other_sales"]
+                     "golf_sales", "facility_fee", "cafe_labor", "other_sales"]
 
 
 # ── 캐시 래퍼 ───────────────────────────────────────────────
@@ -101,14 +101,8 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
             bmr_idx[c].fillna(0) if c in bmr_idx.columns else pd.Series(dtype=float)
             for c in _BMR_REVENUE_COLS
         )
-        bmr_labor = (
-            bmr_idx["cafe_labor"].fillna(0)
-            if "cafe_labor" in bmr_idx.columns
-            else pd.Series(dtype=float)
-        )
     else:
-        bmr_rev   = pd.Series(dtype=float)
-        bmr_labor = pd.Series(dtype=float)
+        bmr_rev = pd.Series(dtype=float)
 
     r = pd.DataFrame({"branch": BRANCH_LIST}).set_index("branch")
     r["카드공급가액"] = card_sup
@@ -117,8 +111,7 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
     r["카드실수령"]   = card_net
     r["현금VAT"]     = cash_vat
     r["현금공급가액"] = cash_sup
-    r["수동입력매출"] = bmr_rev     # 월별 직접입력 매출 합계
-    r["카페인건비"]   = bmr_labor   # 카페인건비 (비용)
+    r["수동입력매출"] = bmr_rev     # 월별 직접입력 매출 합계 (카페인건비 포함)
     r["총매출"]       = (r["카드실수령"].fillna(0)
                         + r["현금공급가액"].fillna(0)
                         + r["수동입력매출"].fillna(0))
@@ -135,7 +128,6 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
     r["인건비합계"] = (
         r["급여"] + r["4대보험료_직원"] + r["소득세지방세"]
         + r["프리랜서"] + r["프리랜서세금"] + r["4대보험_본사"]
-        + r["카페인건비"]
     )
     r["총지출"]  = r["부가세합계"] + r["인건비합계"] + r["기타지출"]
     r["손익"]    = r["총매출"] - r["총지출"]
