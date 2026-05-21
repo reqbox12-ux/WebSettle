@@ -58,18 +58,21 @@ def get_all_branches(active_only: bool = False) -> list[dict]:
     if active_only:
         q += " WHERE is_active = 1"
     q += " ORDER BY id"
-    rows = conn.execute(q).fetchall()
-    return [dict(r) for r in rows]
+    cur  = conn.execute(q)
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
 
 
 def get_active_branch_names() -> list[str]:
     """활성 지점 이름 목록 (드롭다운용). DB 실패 시 JSON 폴백"""
     try:
         conn = get_conn()
-        rows = conn.execute(
-            "SELECT name FROM branches WHERE is_active = 1 ORDER BY id"
-        ).fetchall()
-        names = [r["name"] for r in rows]
+        cur  = conn.execute("SELECT name FROM branches WHERE is_active = 1 ORDER BY id")
+        rows = cur.fetchall()
+        conn.close()
+        names = [r[0] for r in rows]
         return names if names else _JSON_BRANCH_LIST
     except Exception:
         return _JSON_BRANCH_LIST
@@ -148,8 +151,11 @@ def upsert_branch_monthly_revenue(year: int, month: int, branch: str, data: dict
 def get_branch_monthly_revenue(year: int, month: int) -> list[dict]:
     """해당 연/월의 지점별 매출 입력값 조회"""
     conn = get_conn()
-    rows = conn.execute(
+    cur  = conn.execute(
         "SELECT * FROM branch_monthly_revenue WHERE year=? AND month=? ORDER BY branch",
         (year, month),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    )
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
