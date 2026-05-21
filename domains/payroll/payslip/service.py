@@ -1,44 +1,7 @@
 """
 domains/payroll/payslip/service.py — 급여명세서/원천징수영수증 HTML 생성
 """
-import base64
-from pathlib import Path
 from shared.utils import fn
-
-# ── 직인 이미지 base64 로드 ───────────────────────────────────
-_SEAL_PATH = Path(__file__).parent.parent.parent.parent / "assets" / "seal.png"
-
-def _seal_b64() -> str:
-    try:
-        with open(_SEAL_PATH, "rb") as f:
-            return base64.b64encode(f.read()).decode()
-    except Exception:
-        return ""
-
-_SEAL_CSS = """
-.sign-wrap {
-  margin-top: 40px;
-  text-align: right;
-  font-size: 12px;
-  color: #5B5450;
-}
-.sign-area {
-  display: inline-block;
-  position: relative;
-  padding-right: 64px;
-  line-height: 1.8;
-}
-.seal-img {
-  position: absolute;
-  width: 80px;
-  height: 80px;
-  right: -8px;
-  top: -32px;
-  mix-blend-mode: multiply;
-  opacity: 0.88;
-  pointer-events: none;
-}
-"""
 
 
 def gen_payslip_html(entry: dict, company_name: str = "라온스포츠") -> str:
@@ -47,12 +10,6 @@ def gen_payslip_html(entry: dict, company_name: str = "라온스포츠") -> str:
     month  = entry["month"]
     name   = entry.get("name", "")
     branch = entry.get("branch", "")
-    seal   = _seal_b64()
-    seal_tag = (
-        f'<img class="seal-img" src="data:image/png;base64,{seal}">'
-        if seal else ""
-    )
-
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <title>급여명세서 {year}년 {month}월 · {name}</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
@@ -76,7 +33,6 @@ td:last-child{{text-align:right;font-feature-settings:'tnum' 1}}
   display:flex;justify-content:space-between;align-items:center;margin-top:8px}}
 .net-box .label{{font-size:13px;font-weight:600}}
 .net-box .amount{{font-size:20px;font-weight:800}}
-{_SEAL_CSS}
 @media print{{body{{padding:20px}}@page{{margin:10mm}}}}
 </style></head><body>
 <div class="header">
@@ -111,14 +67,6 @@ td:last-child{{text-align:right;font-feature-settings:'tnum' 1}}
   <span class="label">실 수령액</span>
   <span class="amount">{fn(entry.get('net_pay',0))} 원</span>
 </div>
-
-<div class="sign-wrap">
-  <p>{year}년 {month}월 말일</p>
-  <div class="sign-area">
-    <p style="margin-top:8px">{company_name} (인)</p>
-    {seal_tag}
-  </div>
-</div>
 </body></html>"""
 
 
@@ -132,11 +80,6 @@ def gen_withholding_html(entry: dict, company_name: str = "라온스포츠") -> 
     inc_tax = entry.get("income_tax", 0)
     loc_tax = entry.get("local_tax", 0)
     net_pay = entry.get("net_pay", 0)
-    seal    = _seal_b64()
-    seal_tag = (
-        f'<img class="seal-img" src="data:image/png;base64,{seal}">'
-        if seal else ""
-    )
 
     return f"""<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
 <title>사업소득 원천징수영수증 {year}년 {month}월 · {name}</title>
@@ -153,7 +96,7 @@ th{{background:#FAF7F5;padding:8px 10px;text-align:left;font-size:10px;color:#9A
 td{{padding:9px 10px;border-bottom:1px solid rgba(31,27,27,.06)}}
 td:last-child{{text-align:right;font-feature-settings:'tnum' 1}}
 .total-row td{{font-weight:700;border-top:2px solid rgba(31,27,27,.15);padding:12px 10px}}
-{_SEAL_CSS}
+.sign-box{{margin-top:40px;text-align:right;font-size:12px;color:#9A918C}}
 @media print{{body{{padding:20px}}@page{{margin:10mm}}}}
 </style></head><body>
 <div class="header">
@@ -181,11 +124,8 @@ td:last-child{{text-align:right;font-feature-settings:'tnum' 1}}
   <tr class="total-row"><td>실 지급액</td><td>{fn(net_pay)} 원</td></tr>
 </table>
 
-<div class="sign-wrap">
+<div class="sign-box">
   <p>{year}년 {month}월 말일</p>
-  <div class="sign-area">
-    <p style="margin-top:8px">{company_name} (인)</p>
-    {seal_tag}
-  </div>
+  <p style="margin-top:8px">{company_name} (인)</p>
 </div>
 </body></html>"""
