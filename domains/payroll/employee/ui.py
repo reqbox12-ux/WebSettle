@@ -62,16 +62,64 @@ def render():
                 "transport": "교통비", "email": "이메일",
                 "join_date": "입사/등록일", "is_active": "재직",
             }
-            show_df = df[[c for c in display_cols if c in df.columns]].copy()
-            show_df = show_df.rename(columns=display_cols)
-            show_df["유형"] = show_df["유형"].map(EMP_TYPE_SHORT).fillna(show_df["유형"])
-            show_df["재직"] = show_df["재직"].apply(lambda v: "✅" if v else "❌")
-            for col in ["기본급", "식대", "교통비"]:
-                if col in show_df.columns:
-                    show_df[col] = show_df[col].apply(lambda v: f"{int(v):,}" if pd.notna(v) else "0")
+            # 수정 가능한 편집용 df (숫자 그대로 유지)
+            edit_df = df[[c for c in display_cols if c in df.columns]].copy()
+            edit_df = edit_df.rename(columns=display_cols)
+            edit_df["유형"] = edit_df["유형"].map(EMP_TYPE_SHORT).fillna(edit_df["유형"])
+            edit_df["재직"] = edit_df["재직"].apply(lambda v: bool(v))
+            for col in ["부양가족", "기본급", "식대", "교통비"]:
+                if col in edit_df.columns:
+                    edit_df[col] = pd.to_numeric(edit_df[col], errors="coerce").fillna(0).astype(int)
 
-            st.dataframe(show_df, use_container_width=True, hide_index=True, height=450)
-            st.caption(f"총 {len(emps)}명")
+            edited = st.data_editor(
+                edit_df,
+                use_container_width=True,
+                hide_index=True,
+                height=450,
+                num_rows="fixed",
+                key="emp_editor_table",
+                column_config={
+                    "ID":       st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                    "이름":     st.column_config.TextColumn("이름", width="medium"),
+                    "지점":     st.column_config.SelectboxColumn("지점", options=BRANCH_LIST),
+                    "유형":     st.column_config.SelectboxColumn("유형", options=list(EMP_TYPE_SHORT.values())),
+                    "부양가족": st.column_config.NumberColumn("부양가족", min_value=0, max_value=10, step=1),
+                    "기본급":   st.column_config.NumberColumn("기본급", format="%d", min_value=0),
+                    "식대":     st.column_config.NumberColumn("식대", format="%d", min_value=0),
+                    "교통비":   st.column_config.NumberColumn("교통비", format="%d", min_value=0),
+                    "이메일":   st.column_config.TextColumn("이메일"),
+                    "입사/등록일": st.column_config.TextColumn("입사/등록일"),
+                    "재직":     st.column_config.CheckboxColumn("재직"),
+                },
+            )
+            st.caption(f"총 {len(emps)}명 · 셀을 클릭해 직접 수정 후 아래 저장 버튼을 누르세요.")
+
+            if st.button("💾 변경사항 저장", key="emp_inline_save", type="primary"):
+                changes = st.session_state.get("emp_editor_table", {}).get("edited_rows", {})
+                if not changes:
+                    st.info("변경된 내용이 없습니다.")
+                else:
+                    type_reverse = {v: k for k, v in EMP_TYPE_SHORT.items()}
+                    col_reverse  = {v: k for k, v in display_cols.items()}
+                    saved_count  = 0
+                    for row_idx_str, row_changes in changes.items():
+                        emp = dict(emps[int(row_idx_str)])
+                        for col_label, val in row_changes.items():
+                            db_col = col_reverse.get(col_label)
+                            if not db_col:
+                                continue
+                            if db_col == "emp_type":
+                                emp[db_col] = type_reverse.get(val, val)
+                            elif db_col == "is_active":
+                                emp[db_col] = 1 if val else 0
+                            elif db_col in ("base_salary", "meal_allowance", "transport", "dependents"):
+                                emp[db_col] = int(val or 0)
+                            else:
+                                emp[db_col] = str(val or "").strip()
+                        upsert_employee(emp)
+                        saved_count += 1
+                    st.success(f"✅ {saved_count}명 수정 완료")
+                    st.rerun()
 
             st.divider()
             del_id = st.number_input("삭제할 직원 ID", min_value=1, step=1, key="del_emp_id")

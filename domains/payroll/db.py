@@ -422,7 +422,7 @@ def save_insurance_actuals(year: int, month: int, records: list[dict]) -> tuple[
         if not name:
             continue
         emp_row = conn.execute(
-            "SELECT id FROM employees WHERE name=? AND is_active=1", (name,)
+            "SELECT id FROM employees WHERE TRIM(name)=TRIM(?) AND is_active=1", (name,)
         ).fetchone()
         emp_id = emp_row[0] if emp_row else None
         if not emp_id:

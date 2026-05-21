@@ -106,10 +106,13 @@ def _render_upload():
 def _render_view():
     sec("등록된 고지내역 확인")
 
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns([2, 2, 1])
     year  = col1.selectbox("연도", list(range(_now.year, _now.year - 3, -1)), key="ins_view_yr")
     month = col2.selectbox("월",   list(range(1, 13)), index=_now.month - 1, key="ins_view_mn",
                            format_func=lambda m: f"{m}월")
+    col3.markdown("<br>", unsafe_allow_html=True)
+    if col3.button("🔄 새로고침", key="ins_refresh_btn", use_container_width=True):
+        st.rerun()
 
     actuals = get_all_insurance_actuals(year, month)
     if not actuals:
