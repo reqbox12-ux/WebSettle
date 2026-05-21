@@ -12,4 +12,6 @@ from modules.db import (  # noqa: F401
     update_transaction_classification,
     get_keyword_rules, EXPENSE_CATEGORIES, REVENUE_CATEGORIES,
     DB_PATH,
+    delete_card_sales, delete_bank_transactions,
+    delete_keyword_rule, update_keyword_rule,
 )

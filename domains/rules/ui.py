@@ -8,6 +8,7 @@ from shared.config import BRANCH_LIST, ALL_CATEGORIES
 from shared.utils import sec
 from shared.db import (
     get_all_bank_transactions, get_keyword_rules, update_transaction_classification,
+    delete_keyword_rule, update_keyword_rule,
 )
 from modules.classifier import add_rule
 from modules.ai_classifier import ai_classify_batch, ai_extract_keyword, load_api_key, save_api_key
@@ -181,10 +182,66 @@ def render_page():
     # ── 탭2: 규칙 목록 · 추가 ─────────────────────────────
     with tab2:
         sec("규칙 목록")
-        bf  = st.selectbox("통장", ["전체", "hana", "shinhan"])
+        bf  = st.selectbox("통장 필터", ["전체", "hana", "shinhan"], key="rule_bank_filter")
         rdf = get_keyword_rules(None if bf == "전체" else bf)
-        st.dataframe(rdf, use_container_width=True)
-        st.caption(f"총 {len(rdf)}개 규칙")
+
+        if rdf.empty:
+            st.info("등록된 규칙이 없습니다.")
+        else:
+            # 편집용 df: 삭제체크박스 + 지점·계정과목 편집 가능
+            edit_rdf = rdf[["id", "bank", "keyword", "branch", "category", "hit_count"]].copy()
+            edit_rdf.insert(0, "삭제", False)
+
+            edited_rules = st.data_editor(
+                edit_rdf,
+                use_container_width=True,
+                hide_index=True,
+                height=460,
+                num_rows="fixed",
+                key="rules_editor",
+                column_config={
+                    "삭제":       st.column_config.CheckboxColumn("🗑️ 삭제", width="small"),
+                    "id":         st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                    "bank":       st.column_config.TextColumn("통장", disabled=True, width="small"),
+                    "keyword":    st.column_config.TextColumn("키워드", disabled=True, width="large"),
+                    "branch":     st.column_config.SelectboxColumn("지점", options=BRANCH_LIST,
+                                                                    width="medium"),
+                    "category":   st.column_config.SelectboxColumn("계정과목", options=ALL_CATEGORIES,
+                                                                    width="medium"),
+                    "hit_count":  st.column_config.NumberColumn("적용횟수", disabled=True, width="small"),
+                },
+            )
+            st.caption(f"총 {len(rdf)}개 규칙 · 지점·계정과목 수정 가능 · 🗑️ 체크 후 저장하면 삭제")
+
+            if st.button("💾 변경사항 저장 (수정·삭제)", key="rules_save_btn", type="primary"):
+                changes  = st.session_state.get("rules_editor", {}).get("edited_rows", {})
+                del_count = 0
+                upd_count = 0
+                for row_idx_str, row_ch in changes.items():
+                    idx     = int(row_idx_str)
+                    rule_id = int(rdf.iloc[idx]["id"])
+
+                    # 삭제 체크된 경우
+                    if row_ch.get("삭제", False):
+                        delete_keyword_rule(rule_id)
+                        del_count += 1
+                    else:
+                        # 지점 또는 계정과목 변경
+                        new_br  = row_ch.get("branch",   rdf.iloc[idx]["branch"])
+                        new_cat = row_ch.get("category", rdf.iloc[idx]["category"])
+                        update_keyword_rule(rule_id, new_br, new_cat)
+                        upd_count += 1
+
+                msgs = []
+                if del_count:
+                    msgs.append(f"{del_count}개 삭제")
+                if upd_count:
+                    msgs.append(f"{upd_count}개 수정")
+                if msgs:
+                    st.success(f"✅ {' / '.join(msgs)} 완료")
+                    st.rerun()
+                else:
+                    st.info("변경된 내용이 없습니다.")
 
         sec("새 규칙 추가")
         c1, c2 = st.columns(2)

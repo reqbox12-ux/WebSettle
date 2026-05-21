@@ -767,6 +767,64 @@ def get_insurance_summary(year: int, month: int = None, branch: str = None) -> p
         return df
 
 
+def delete_card_sales(year: int, month: int):
+    """해당 월 카드매출 전체 삭제"""
+    conn = get_conn()
+    c = conn.cursor()
+    if USE_POSTGRES:
+        c.execute("DELETE FROM card_sales WHERE year=%s AND month=%s", (year, month))
+    else:
+        c.execute("DELETE FROM card_sales WHERE year=? AND month=?", (year, month))
+    conn.commit()
+    conn.close()
+
+
+def delete_bank_transactions(year: int, month: int, bank: str = None):
+    """해당 월 통장내역 삭제. bank 지정 시 해당 통장만 삭제"""
+    conn = get_conn()
+    c = conn.cursor()
+    if bank:
+        if USE_POSTGRES:
+            c.execute("DELETE FROM bank_transactions WHERE year=%s AND month=%s AND bank=%s",
+                      (year, month, bank))
+        else:
+            c.execute("DELETE FROM bank_transactions WHERE year=? AND month=? AND bank=?",
+                      (year, month, bank))
+    else:
+        if USE_POSTGRES:
+            c.execute("DELETE FROM bank_transactions WHERE year=%s AND month=%s", (year, month))
+        else:
+            c.execute("DELETE FROM bank_transactions WHERE year=? AND month=?", (year, month))
+    conn.commit()
+    conn.close()
+
+
+def delete_keyword_rule(rule_id: int):
+    """키워드 규칙 단건 삭제"""
+    conn = get_conn()
+    c = conn.cursor()
+    if USE_POSTGRES:
+        c.execute("DELETE FROM keyword_rules WHERE id=%s", (rule_id,))
+    else:
+        c.execute("DELETE FROM keyword_rules WHERE id=?", (rule_id,))
+    conn.commit()
+    conn.close()
+
+
+def update_keyword_rule(rule_id: int, branch: str, category: str):
+    """키워드 규칙 지점·계정과목 수정"""
+    conn = get_conn()
+    c = conn.cursor()
+    if USE_POSTGRES:
+        c.execute("UPDATE keyword_rules SET branch=%s, category=%s WHERE id=%s",
+                  (branch, category, rule_id))
+    else:
+        c.execute("UPDATE keyword_rules SET branch=?, category=? WHERE id=?",
+                  (branch, category, rule_id))
+    conn.commit()
+    conn.close()
+
+
 def get_keyword_rules(bank: str = None):
     if USE_POSTGRES:
         if bank:
