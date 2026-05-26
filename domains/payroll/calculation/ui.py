@@ -99,6 +99,91 @@ def render():
         # ── 사업소득자 ──────────────────────────────────────
         if freelance_emps:
             sec(f"사업소득자 ({len(freelance_emps)}명)")
+
+            # ── 엑셀 일괄 업로드 ────────────────────────────
+            with st.expander("📤 엑셀로 일괄 입력 (이름 / 지점 / 세전금액)", expanded=False):
+                st.caption(
+                    "컬럼: **이름**, **지점**, **세전금액** 3개만 있으면 됩니다. "
+                    "이름+지점으로 직원 마스터와 자동 매칭 후 3.3% 원천징수를 계산합니다."
+                )
+                fl_file = st.file_uploader(
+                    "사업소득자_급여.xlsx", type=["xlsx", "xls"],
+                    key=f"fl_upload_{year}_{month}",
+                )
+                if fl_file:
+                    try:
+                        fl_df = pd.read_excel(fl_file, dtype=str).fillna("")
+                        fl_df.columns = [str(c).strip() for c in fl_df.columns]
+
+                        # 컬럼명 유연 매핑
+                        name_col   = next((c for c in fl_df.columns if "이름"   in c or "성명" in c or "직원" in c), None)
+                        branch_col = next((c for c in fl_df.columns if "지점"   in c or "소속" in c or "부서" in c), None)
+                        pay_col    = next((c for c in fl_df.columns if "금액"   in c or "세전" in c or "지급" in c or "급여" in c), None)
+
+                        if not (name_col and branch_col and pay_col):
+                            st.error(f"필수 컬럼을 찾지 못했습니다. 현재 컬럼: {list(fl_df.columns)}")
+                        else:
+                            # 직원 마스터를 (name, branch) 키로 인덱싱
+                            emp_map = {(e["name"], e["branch"]): e for e in freelance_emps}
+
+                            preview_rows = []
+                            for _, row in fl_df.iterrows():
+                                name   = str(row[name_col]).strip()
+                                branch = str(row[branch_col]).strip()
+                                raw    = str(row[pay_col]).replace(",", "").strip()
+                                if not name or name == "nan":
+                                    continue
+                                try:
+                                    gross = int(float(raw)) if raw and raw != "nan" else 0
+                                except ValueError:
+                                    gross = 0
+
+                                emp    = emp_map.get((name, branch))
+                                status = "✅ 매칭" if emp else "⚠️ 직원 없음"
+                                tax    = round(gross * 0.033) if emp else 0
+                                net    = gross - tax if emp else 0
+                                preview_rows.append({
+                                    "상태": status,
+                                    "이름": name,
+                                    "지점": branch,
+                                    "세전금액": f"{gross:,}",
+                                    "원천징수(3.3%)": f"{tax:,}",
+                                    "실수령액": f"{net:,}",
+                                    "_emp": emp,
+                                    "_gross": gross,
+                                })
+
+                            if preview_rows:
+                                matched   = [r for r in preview_rows if r["_emp"]]
+                                unmatched = [r for r in preview_rows if not r["_emp"]]
+
+                                show_df = pd.DataFrame([
+                                    {k: v for k, v in r.items() if not k.startswith("_")}
+                                    for r in preview_rows
+                                ])
+                                st.dataframe(show_df, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    f"총 {len(preview_rows)}행 — 매칭 {len(matched)}명 / "
+                                    f"미매칭 {len(unmatched)}명"
+                                    + (f" (미매칭: {', '.join(r['이름']+'('+r['지점']+')' for r in unmatched)})" if unmatched else "")
+                                )
+
+                                if matched and st.button(
+                                    f"✅ 매칭된 {len(matched)}명 급여 저장 ({year}년 {month}월)",
+                                    type="primary", key="fl_bulk_save",
+                                ):
+                                    ok = 0
+                                    for r in matched:
+                                        if r["_gross"] > 0:
+                                            entry = calc_freelance(r["_emp"], year, month, r["_gross"])
+                                            if save_payroll_entry(entry):
+                                                ok += 1
+                                    st.success(f"✅ {ok}명 저장 완료")
+                                    st.rerun()
+                    except Exception as ex:
+                        st.error(f"파일 읽기 오류: {ex}")
+
+            # ── 개별 직접 입력 폼 ────────────────────────────
             st.caption("이번 달 실지급액을 입력하세요. 3.3% 원천징수 자동 계산.")
             with st.form("freelance_calc_form"):
                 payments: dict = {}
