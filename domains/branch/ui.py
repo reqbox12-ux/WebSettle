@@ -598,17 +598,20 @@ def _render_branch_mgmt():
 
         if st.button("📍 입력 주소로 위도/경도 자동 변환", key="geocode_btn",
                      use_container_width=True, type="primary"):
+            import re
             addr = st.session_state.get(f"loc_addr_{sel_br_name}", "").strip()
             if addr:
-                with st.spinner("🔍 좌표 변환 중..."):
-                    lat, lng = _geocode_nominatim(addr)
+                # 괄호 건물명 제거 후 검색 (예: "황새울로14 (서현리더스빌딩)" → "황새울로14")
+                clean_addr = re.sub(r'\(.*?\)', '', addr).strip()
+                with st.spinner(f"🔍 '{clean_addr}' 좌표 변환 중..."):
+                    lat, lng = _geocode_nominatim(clean_addr)
                 if lat and lng:
                     st.session_state[lat_key] = lat
                     st.session_state[lng_key] = lng
                     st.success(f"✅ 좌표 변환 완료: {lat:.6f}, {lng:.6f}")
                     st.rerun()
                 else:
-                    st.warning("⚠️ 좌표를 찾지 못했습니다. 주소를 더 구체적으로 입력해보세요.")
+                    st.error(f"⚠️ '{clean_addr}' 좌표를 찾지 못했습니다. 도로명 주소만 간략히 입력해보세요.")
             else:
                 st.warning("주소를 먼저 입력하세요.")
 
