@@ -36,6 +36,20 @@ def _migrate_employees_emp_type(conn):
     conn.commit()
 
 
+def _migrate_employees_add_columns(conn):
+    """phone, work_start, work_end, hourly_rate 컬럼 마이그레이션 (기존 DB 호환)"""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+    if "phone" not in cols:
+        conn.execute("ALTER TABLE employees ADD COLUMN phone TEXT DEFAULT ''")
+    if "work_start" not in cols:
+        conn.execute("ALTER TABLE employees ADD COLUMN work_start TEXT DEFAULT '09:00'")
+    if "work_end" not in cols:
+        conn.execute("ALTER TABLE employees ADD COLUMN work_end TEXT DEFAULT '18:00'")
+    if "hourly_rate" not in cols:
+        conn.execute("ALTER TABLE employees ADD COLUMN hourly_rate INTEGER DEFAULT 0")
+    conn.commit()
+
+
 def init_payroll_tables():
     """급여 시스템 전용 테이블 생성"""
     conn = get_conn()
@@ -159,9 +173,37 @@ def init_payroll_tables():
             error_msg       TEXT DEFAULT '',
             created_at      TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        -- 직원 랜딩페이지 로그인 계정
+        CREATE TABLE IF NOT EXISTS employee_accounts (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id     INTEGER UNIQUE NOT NULL,
+            username        TEXT UNIQUE NOT NULL,
+            password_hash   TEXT NOT NULL,
+            must_change_pw  INTEGER DEFAULT 1,
+            last_login      TEXT,
+            is_active       INTEGER DEFAULT 1,
+            created_at      TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- 출퇴근 근태 기록
+        CREATE TABLE IF NOT EXISTS attendance (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id     INTEGER NOT NULL,
+            work_date       TEXT NOT NULL,
+            clock_in        TEXT,
+            clock_out       TEXT,
+            work_minutes    INTEGER DEFAULT 0,
+            break_minutes   INTEGER DEFAULT 0,
+            status          TEXT DEFAULT 'present',
+            note            TEXT DEFAULT '',
+            created_at      TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(employee_id, work_date)
+        );
     """)
     conn.commit()
     _migrate_employees_emp_type(conn)
+    _migrate_employees_add_columns(conn)
 
     # 기본 4대보험 요율 (2025년)
     exists = conn.execute("SELECT id FROM insurance_rates WHERE year=2025").fetchone()
@@ -220,41 +262,43 @@ def upsert_employee(data: dict) -> int:
         data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
         data.get("email", ""), data.get("id_number", ""), data.get("join_date", ""),
         data.get("is_active", 1), data.get("note", ""),
+        data.get("phone", ""), data.get("work_start", "09:00"),
+        data.get("work_end", "18:00"), data.get("hourly_rate", 0),
     )
 
     if data.get("id"):
-        # 명시적 ID가 있으면 그 행을 업데이트
         conn.execute("""
             UPDATE employees SET
                 name=?, branch=?, emp_type=?, dependents=?,
                 base_salary=?, meal_allowance=?, transport=?,
-                email=?, id_number=?, join_date=?, is_active=?, note=?
+                email=?, id_number=?, join_date=?, is_active=?, note=?,
+                phone=?, work_start=?, work_end=?, hourly_rate=?
             WHERE id=?
         """, (*params_vals, data["id"]))
         emp_id = int(data["id"])
     else:
-        # (name, branch) 기준으로 기존 직원 조회
         existing = conn.execute(
             "SELECT id FROM employees WHERE name=? AND branch=? ORDER BY id LIMIT 1",
             (name, branch),
         ).fetchone()
 
         if existing:
-            # 이미 같은 이름+지점 직원이 있으면 UPDATE (중복 방지)
             emp_id = existing[0]
             conn.execute("""
                 UPDATE employees SET
                     name=?, branch=?, emp_type=?, dependents=?,
                     base_salary=?, meal_allowance=?, transport=?,
-                    email=?, id_number=?, join_date=?, is_active=?, note=?
+                    email=?, id_number=?, join_date=?, is_active=?, note=?,
+                    phone=?, work_start=?, work_end=?, hourly_rate=?
                 WHERE id=?
             """, (*params_vals, emp_id))
         else:
-            cur    = conn.execute("""
+            cur = conn.execute("""
                 INSERT INTO employees
                 (name, branch, emp_type, dependents, base_salary, meal_allowance,
-                 transport, email, id_number, join_date, is_active, note)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                 transport, email, id_number, join_date, is_active, note,
+                 phone, work_start, work_end, hourly_rate)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, params_vals)
             emp_id = cur.lastrowid
 
@@ -552,6 +596,231 @@ def delete_insurance_actuals(year: int, month: int) -> bool:
 
 
 # ── 이메일 로그 ──────────────────────────────────────────────
+# ── 직원 계정 (랜딩페이지 로그인) ────────────────────────────
+import hashlib as _hashlib
+
+
+def _hash_pw(pw: str) -> str:
+    return _hashlib.sha256(str(pw).strip().encode("utf-8")).hexdigest()
+
+
+def create_employee_account(employee_id: int, username: str, default_pw: str) -> tuple[bool, str]:
+    """직원 계정 생성/갱신. username=이메일, default_pw=전화번호뒷4자리"""
+    try:
+        conn = get_conn()
+        conn.execute("""
+            INSERT OR REPLACE INTO employee_accounts
+            (employee_id, username, password_hash, must_change_pw, is_active)
+            VALUES (?,?,?,1,1)
+        """, (employee_id, username.strip(), _hash_pw(default_pw)))
+        conn.commit()
+        conn.close()
+        return True, "계정 생성 완료"
+    except Exception as e:
+        return False, str(e)
+
+
+def get_employee_account(employee_id: int) -> dict | None:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM employee_accounts WHERE employee_id=?", (employee_id,)
+    )
+    cols = [d[0] for d in cur.description]
+    row  = cur.fetchone()
+    conn.close()
+    return dict(zip(cols, row)) if row else None
+
+
+def get_all_employee_accounts() -> list[dict]:
+    conn = get_conn()
+    cur  = conn.execute("""
+        SELECT ea.*, e.name, e.branch, e.email, e.phone
+        FROM employee_accounts ea
+        JOIN employees e ON ea.employee_id = e.id
+        ORDER BY e.branch, e.name
+    """)
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def verify_employee_login(username: str, password: str) -> dict | None:
+    """로그인 검증. 성공 시 직원 정보 반환, 실패 시 None"""
+    conn = get_conn()
+    try:
+        pw_hash = _hash_pw(password)
+        row = conn.execute("""
+            SELECT ea.employee_id, ea.must_change_pw, ea.is_active,
+                   e.name, e.branch, e.emp_type, e.email, e.phone,
+                   e.work_start, e.work_end, e.hourly_rate, ea.username
+            FROM employee_accounts ea
+            JOIN employees e ON ea.employee_id = e.id
+            WHERE ea.username=? AND ea.password_hash=? AND ea.is_active=1 AND e.is_active=1
+        """, (username.strip(), pw_hash)).fetchone()
+        if row:
+            conn.execute(
+                "UPDATE employee_accounts SET last_login=datetime('now','localtime') WHERE employee_id=?",
+                (row[0],)
+            )
+            conn.commit()
+            return {
+                "employee_id": row[0], "must_change_pw": bool(row[1]),
+                "name": row[3], "branch": row[4], "emp_type": row[5],
+                "email": row[6] or "", "phone": row[7] or "",
+                "work_start": row[8] or "09:00", "work_end": row[9] or "18:00",
+                "hourly_rate": row[10] or 0, "username": row[11],
+            }
+        return None
+    finally:
+        conn.close()
+
+
+def update_employee_password(employee_id: int, new_password: str) -> bool:
+    try:
+        conn = get_conn()
+        conn.execute("""
+            UPDATE employee_accounts
+            SET password_hash=?, must_change_pw=0
+            WHERE employee_id=?
+        """, (_hash_pw(new_password), employee_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def reset_employee_password(employee_id: int, new_pw: str) -> bool:
+    """관리자용 비밀번호 초기화 (다음 로그인 시 변경 강제)"""
+    try:
+        conn = get_conn()
+        conn.execute("""
+            UPDATE employee_accounts
+            SET password_hash=?, must_change_pw=1
+            WHERE employee_id=?
+        """, (_hash_pw(str(new_pw)), employee_id))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+# ── 근태 기록 (출퇴근) ────────────────────────────────────────
+
+def attendance_clock_in(employee_id: int, work_date: str, clock_time: str) -> tuple[bool, str]:
+    """출근 기록. work_date=YYYY-MM-DD, clock_time=HH:MM"""
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id, clock_in FROM attendance WHERE employee_id=? AND work_date=?",
+            (employee_id, work_date)
+        ).fetchone()
+        if existing:
+            if existing[1]:
+                conn.close()
+                return False, f"이미 출근 처리됨 ({existing[1]})"
+            conn.execute("UPDATE attendance SET clock_in=? WHERE id=?", (clock_time, existing[0]))
+        else:
+            conn.execute(
+                "INSERT INTO attendance (employee_id, work_date, clock_in) VALUES (?,?,?)",
+                (employee_id, work_date, clock_time)
+            )
+        conn.commit()
+        return True, clock_time
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def attendance_clock_out(employee_id: int, work_date: str, clock_time: str,
+                         work_start: str = "09:00") -> tuple[bool, str]:
+    """퇴근 기록 + 근무시간·지각 여부 자동 계산"""
+    from datetime import datetime as _dt, timedelta as _td
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id, clock_in FROM attendance WHERE employee_id=? AND work_date=?",
+            (employee_id, work_date)
+        ).fetchone()
+        if not existing or not existing[1]:
+            conn.close()
+            return False, "출근 기록이 없습니다."
+
+        # 근무시간 계산
+        try:
+            ci = _dt.strptime(existing[1], "%H:%M")
+            co = _dt.strptime(clock_time, "%H:%M")
+            total_min = max(0, int((co - ci).total_seconds() / 60))
+            break_min = 30 if total_min >= 480 else 0
+            work_min  = max(0, total_min - break_min)
+        except Exception:
+            work_min, break_min = 0, 0
+
+        # 지각 판정 (기준시간 + 10분 초과 시)
+        try:
+            ws  = _dt.strptime(work_start, "%H:%M")
+            ci2 = _dt.strptime(existing[1], "%H:%M")
+            status = "late" if ci2 > ws + _td(minutes=10) else "present"
+        except Exception:
+            status = "present"
+
+        conn.execute("""
+            UPDATE attendance
+            SET clock_out=?, work_minutes=?, break_minutes=?, status=?
+            WHERE id=?
+        """, (clock_time, work_min, break_min, status, existing[0]))
+        conn.commit()
+        return True, clock_time
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def get_attendance_record(employee_id: int, work_date: str) -> dict | None:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM attendance WHERE employee_id=? AND work_date=?",
+        (employee_id, work_date)
+    )
+    cols = [d[0] for d in cur.description]
+    row  = cur.fetchone()
+    conn.close()
+    return dict(zip(cols, row)) if row else None
+
+
+def get_monthly_attendance(employee_id: int, year: int, month: int) -> list[dict]:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM attendance WHERE employee_id=? AND work_date LIKE ? ORDER BY work_date",
+        (employee_id, f"{year}-{month:02d}%")
+    )
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_today_branch_attendance(branch: str, work_date: str) -> list[dict]:
+    """관리자용: 특정 지점 오늘 출퇴근 현황"""
+    conn = get_conn()
+    cur  = conn.execute("""
+        SELECT a.work_date, a.clock_in, a.clock_out, a.work_minutes, a.status,
+               e.name, e.emp_type, e.work_start, e.work_end
+        FROM attendance a
+        JOIN employees e ON a.employee_id = e.id
+        WHERE e.branch=? AND a.work_date=? AND e.is_active=1
+        ORDER BY a.clock_in NULLS LAST
+    """, (branch, work_date))
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
 def log_email(year: int, month: int, employee_id: int,
               email: str, subject: str, status: str, error: str = "") -> bool:
     try:

@@ -9,6 +9,8 @@ from domains.branch.db import get_active_branch_names
 from domains.payroll.db import (
     get_all_employees, get_employees_by_branch,
     upsert_employee, delete_employee, deduplicate_employees,
+    create_employee_account, get_employee_account, get_all_employee_accounts,
+    reset_employee_password,
 )
 from domains.payroll.employee.service import import_employees_from_excel
 
@@ -30,7 +32,9 @@ def render():
     BRANCH_LIST = get_active_branch_names()
     sec("직원 마스터")
 
-    tab_list, tab_add, tab_import = st.tabs(["직원 목록", "직원 추가/수정", "엑셀 일괄 등록"])
+    tab_list, tab_add, tab_import, tab_account = st.tabs(
+        ["직원 목록", "직원 추가/수정", "엑셀 일괄 등록", "🔑 직원 계정"]
+    )
 
     # ── 직원 목록 ────────────────────────────────────────────
     with tab_list:
@@ -85,14 +89,14 @@ def render():
                 "emp_type": "유형", "dependents": "부양가족",
                 "base_salary": "기본급", "meal_allowance": "식대",
                 "transport": "교통비", "email": "이메일",
-                "join_date": "입사/등록일", "is_active": "재직",
+                "phone": "전화번호", "work_start": "출근시간", "work_end": "퇴근시간",
+                "hourly_rate": "시급", "join_date": "입사/등록일", "is_active": "재직",
             }
-            # 수정 가능한 편집용 df (숫자 그대로 유지)
             edit_df = df[[c for c in display_cols if c in df.columns]].copy()
             edit_df = edit_df.rename(columns=display_cols)
             edit_df["유형"] = edit_df["유형"].map(EMP_TYPE_SHORT).fillna(edit_df["유형"])
             edit_df["재직"] = edit_df["재직"].apply(lambda v: bool(v))
-            for col in ["부양가족", "기본급", "식대", "교통비"]:
+            for col in ["부양가족", "기본급", "식대", "교통비", "시급"]:
                 if col in edit_df.columns:
                     edit_df[col] = pd.to_numeric(edit_df[col], errors="coerce").fillna(0).astype(int)
 
@@ -104,17 +108,21 @@ def render():
                 num_rows="fixed",
                 key="emp_editor_table",
                 column_config={
-                    "ID":       st.column_config.NumberColumn("ID", disabled=True, width="small"),
-                    "이름":     st.column_config.TextColumn("이름", width="medium"),
-                    "지점":     st.column_config.SelectboxColumn("지점", options=BRANCH_LIST),
-                    "유형":     st.column_config.SelectboxColumn("유형", options=list(EMP_TYPE_SHORT.values())),
-                    "부양가족": st.column_config.NumberColumn("부양가족", min_value=0, max_value=10, step=1),
-                    "기본급":   st.column_config.NumberColumn("기본급", format="%d", min_value=0),
-                    "식대":     st.column_config.NumberColumn("식대", format="%d", min_value=0),
-                    "교통비":   st.column_config.NumberColumn("교통비", format="%d", min_value=0),
-                    "이메일":   st.column_config.TextColumn("이메일"),
+                    "ID":         st.column_config.NumberColumn("ID", disabled=True, width="small"),
+                    "이름":       st.column_config.TextColumn("이름", width="medium"),
+                    "지점":       st.column_config.SelectboxColumn("지점", options=BRANCH_LIST),
+                    "유형":       st.column_config.SelectboxColumn("유형", options=list(EMP_TYPE_SHORT.values())),
+                    "부양가족":   st.column_config.NumberColumn("부양가족", min_value=0, max_value=10, step=1),
+                    "기본급":     st.column_config.NumberColumn("기본급", format="%d", min_value=0),
+                    "식대":       st.column_config.NumberColumn("식대", format="%d", min_value=0),
+                    "교통비":     st.column_config.NumberColumn("교통비", format="%d", min_value=0),
+                    "이메일":     st.column_config.TextColumn("이메일"),
+                    "전화번호":   st.column_config.TextColumn("전화번호"),
+                    "출근시간":   st.column_config.TextColumn("출근시간", help="HH:MM 형식 (예: 09:00)"),
+                    "퇴근시간":   st.column_config.TextColumn("퇴근시간", help="HH:MM 형식 (예: 18:00)"),
+                    "시급":       st.column_config.NumberColumn("시급", format="%d", min_value=0),
                     "입사/등록일": st.column_config.TextColumn("입사/등록일"),
-                    "재직":     st.column_config.CheckboxColumn("재직"),
+                    "재직":       st.column_config.CheckboxColumn("재직"),
                 },
             )
             st.caption(f"총 {len(emps)}명 · 셀을 클릭해 직접 수정 후 아래 저장 버튼을 누르세요.")
@@ -137,7 +145,8 @@ def render():
                                 emp[db_col] = type_reverse.get(val, val)
                             elif db_col == "is_active":
                                 emp[db_col] = 1 if val else 0
-                            elif db_col in ("base_salary", "meal_allowance", "transport", "dependents"):
+                            elif db_col in ("base_salary", "meal_allowance", "transport",
+                                            "dependents", "hourly_rate"):
                                 emp[db_col] = int(val or 0)
                             else:
                                 emp[db_col] = str(val or "").strip()
@@ -188,13 +197,24 @@ def render():
             emp_trans = 0
 
         col10, col11 = st.columns(2)
-        emp_email = col10.text_input("이메일", key="emp_email")
+        emp_email = col10.text_input("이메일 (랜딩페이지 로그인 ID)", key="emp_email")
+        emp_phone = col11.text_input("전화번호 (기본 비밀번호 뒷4자리)", key="emp_phone",
+                                     placeholder="010-1234-5678")
+
+        col12, col13, col14 = st.columns(3)
+        emp_wstart = col12.text_input("출근시간", value="09:00", key="emp_wstart",
+                                      help="HH:MM 형식 (지각 판정 기준)")
+        emp_wend   = col13.text_input("퇴근시간", value="18:00", key="emp_wend",
+                                      help="HH:MM 형식")
+        emp_hwage  = col14.number_input("시급 (시간제 해당자)", min_value=0, step=100,
+                                        key="emp_hwage", help="월급제는 0 입력")
+
         if is_business:
-            emp_idnum = col11.text_input("사업자등록번호", key="emp_idnum",
-                                         help="계산서 발행 확인용")
+            emp_idnum = st.text_input("사업자등록번호", key="emp_idnum",
+                                      help="계산서 발행 확인용")
         elif emp_type == "freelance":
-            emp_idnum = col11.text_input("주민등록번호", type="password", key="emp_idnum",
-                                          help="원천징수영수증 발급용")
+            emp_idnum = st.text_input("주민등록번호", type="password", key="emp_idnum",
+                                      help="원천징수영수증 발급용")
         else:
             emp_idnum = ""
 
@@ -221,6 +241,10 @@ def render():
                     "meal_allowance": int(emp_meal),
                     "transport":      int(emp_trans),
                     "email":          emp_email.strip(),
+                    "phone":          emp_phone.strip(),
+                    "work_start":     emp_wstart.strip() or "09:00",
+                    "work_end":       emp_wend.strip() or "18:00",
+                    "hourly_rate":    int(emp_hwage),
                     "id_number":      emp_idnum.strip() if emp_idnum else "",
                     "join_date":      emp_join.strip(),
                     "is_active":      1,
@@ -228,6 +252,100 @@ def render():
                 }
                 eid = upsert_employee(data)
                 st.success(f"✅ 저장 완료 (ID: {eid})")
+                st.rerun()
+
+    # ── 직원 계정 관리 ────────────────────────────────────────
+    with tab_account:
+        sec("직원 계정 관리")
+        st.caption("직원들이 **랜딩페이지(포트 8502)**에 로그인할 계정을 관리합니다. "
+                   "아이디=이메일, 초기 비밀번호=전화번호 뒷 4자리")
+
+        all_emps_acc  = get_all_employees()
+        staff_emps    = [e for e in all_emps_acc if e["emp_type"] in ("insured", "freelance")]
+        existing_accs = {a["employee_id"]: a for a in get_all_employee_accounts()}
+
+        # 일괄 생성
+        eligible   = [e for e in staff_emps
+                      if e.get("email", "").strip() and len(e.get("phone", "").replace("-","").replace(" ","")) >= 4]
+        no_info    = [e for e in staff_emps
+                      if not (e.get("email", "").strip() and len(e.get("phone", "").replace("-","").replace(" ","")) >= 4)]
+
+        col_aa, col_ab = st.columns([3, 1])
+        with col_aa:
+            if no_info:
+                st.warning(f"⚠️ 이메일 또는 전화번호 미등록: **{len(no_info)}명** "
+                           f"— 직원 추가/수정 탭에서 먼저 입력하세요.")
+        with col_ab:
+            if st.button(f"✨ 계정 일괄 생성 ({len(eligible)}명)", type="primary", key="bulk_create_acc"):
+                created = skipped = 0
+                for emp in eligible:
+                    last4 = emp["phone"].replace("-", "").replace(" ", "")[-4:]
+                    ok, _ = create_employee_account(emp["id"], emp["email"].strip(), last4)
+                    if ok:
+                        created += 1
+                    else:
+                        skipped += 1
+                st.success(f"✅ 생성: {created}명 | 이미 있음(유지): {skipped}명")
+                st.rerun()
+
+        st.divider()
+
+        # 계정 현황 테이블
+        st.markdown("##### 계정 현황")
+        rows = []
+        for emp in staff_emps:
+            acc = existing_accs.get(emp["id"])
+            rows.append({
+                "ID": emp["id"],
+                "이름": emp["name"],
+                "지점": emp["branch"],
+                "유형": EMP_TYPE_SHORT.get(emp["emp_type"], emp["emp_type"]),
+                "이메일(ID)": emp.get("email", "") or "—",
+                "전화번호": emp.get("phone", "") or "—",
+                "계정": "✅" if acc else "❌",
+                "마지막로그인": (acc["last_login"][:16] if acc and acc.get("last_login") else "—"),
+                "PW변경필요": ("⚠️ 미변경" if acc and acc.get("must_change_pw") else ("✅" if acc else "—")),
+                "상태": ("활성" if acc and acc.get("is_active") else ("비활성" if acc else "—")),
+            })
+        if rows:
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True, height=380)
+        else:
+            st.info("4대보험/사업소득자 직원이 없습니다.")
+
+        st.divider()
+        st.markdown("##### 개별 계정 생성 / 비밀번호 초기화")
+        col_c1, col_c2, col_c3 = st.columns([2, 2, 2])
+        target_id = int(col_c1.number_input("직원 ID", min_value=1, step=1, key="acc_emp_id"))
+        custom_pw = col_c2.text_input("비밀번호 (비워두면 전화뒷4자리)", key="acc_custom_pw")
+
+        col_btn1, col_btn2 = col_c3.columns(2)
+        if col_btn1.button("생성/갱신", type="primary", key="single_create_acc"):
+            emp_found = next((e for e in all_emps_acc if e["id"] == target_id), None)
+            if not emp_found:
+                st.error("해당 ID의 직원이 없습니다.")
+            elif not emp_found.get("email", "").strip():
+                st.error("이메일을 먼저 등록하세요.")
+            else:
+                phone_raw = emp_found.get("phone", "").replace("-", "").replace(" ", "")
+                pw = custom_pw.strip() if custom_pw.strip() else (phone_raw[-4:] if len(phone_raw) >= 4 else "0000")
+                ok, msg = create_employee_account(emp_found["id"], emp_found["email"].strip(), pw)
+                if ok:
+                    st.success(f"✅ {emp_found['name']} 계정 생성 완료 — 아이디: {emp_found['email']} / 초기PW: {pw}")
+                else:
+                    st.error(f"실패: {msg}")
+                st.rerun()
+
+        if col_btn2.button("PW초기화", key="reset_pw_btn"):
+            emp_found = next((e for e in all_emps_acc if e["id"] == target_id), None)
+            if not emp_found:
+                st.error("해당 ID의 직원이 없습니다.")
+            else:
+                phone_raw = emp_found.get("phone", "").replace("-", "").replace(" ", "")
+                pw = custom_pw.strip() if custom_pw.strip() else (phone_raw[-4:] if len(phone_raw) >= 4 else "0000")
+                if reset_employee_password(emp_found["id"], pw):
+                    st.success(f"✅ {emp_found['name']} 비밀번호 초기화 완료 (새 PW: {pw}) — 다음 로그인 시 변경 안내")
+                else:
+                    st.error("초기화 실패")
                 st.rerun()
 
     # ── 엑셀 일괄 등록 ───────────────────────────────────────
