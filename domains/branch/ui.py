@@ -411,104 +411,89 @@ def _render_detail(year: int, month: int):
     _render_pdf_section(full_df, br_sel, year, month)
 
 
+# ── Nominatim 지오코딩 (API 키 불필요) ───────────────────────
+def _geocode_nominatim(address: str) -> tuple:
+    """OpenStreetMap Nominatim으로 주소 → 위도/경도 변환"""
+    import urllib.request, urllib.parse, json
+    try:
+        url = (
+            "https://nominatim.openstreetmap.org/search"
+            f"?q={urllib.parse.quote(address)}&format=json&limit=1&countrycodes=kr"
+        )
+        req = urllib.request.Request(url, headers={"User-Agent": "WebSettle-LaonSports/1.0"})
+        with urllib.request.urlopen(req, timeout=7) as resp:
+            rows = json.loads(resp.read())
+        if rows:
+            return float(rows[0]["lat"]), float(rows[0]["lon"])
+    except Exception:
+        pass
+    return None, None
+
+
 # ── 카카오맵 미리보기 iframe ──────────────────────────────────
 def _kakao_map_iframe(lat: float, lng: float, name: str = "") -> str:
-    """위도/경도로 카카오맵 정적 지도 iframe HTML 반환"""
-    encoded_name = name.replace("'", "\\'")
-    return f"""
-    <iframe
-      src="https://map.kakao.com/link/map/{encoded_name},{lat},{lng}"
-      style="width:100%;height:320px;border:1px solid #E8E2DE;border-radius:10px;"
-      allowfullscreen>
-    </iframe>
-    """
+    safe_name = name.replace("'", "").replace('"', "")
+    return (
+        f'<iframe src="https://map.kakao.com/link/map/{safe_name},{lat},{lng}" '
+        f'style="width:100%;height:380px;border:1px solid #E8E2DE;border-radius:10px;" '
+        f'allowfullscreen></iframe>'
+    )
 
 
-# ── 카카오(Daum) 주소 검색 컴포넌트 ─────────────────────────
-_DAUM_POSTCODE_HTML = """
-<!DOCTYPE html>
+# ── Daum 주소 검색 임베드 HTML (팝업 아닌 인라인 임베드) ────
+_DAUM_EMBED_HTML = """<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <script src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
 <style>
-  body { margin:0; padding:0; background:#FAF7F5; font-family:'Apple SD Gothic Neo',sans-serif; }
-  .wrap { padding:20px; }
-  h3 { font-size:14px; color:#1F1B1B; margin:0 0 12px; font-weight:700; }
-  button {
-    background:#E60028; color:#fff; border:none; border-radius:8px;
-    padding:10px 20px; font-size:13px; font-weight:700; cursor:pointer;
-    width:100%; margin-bottom:12px;
-  }
-  button:hover { background:#c0001f; }
-  .result { background:#fff; border:1px solid #E8E2DE; border-radius:8px; padding:14px; display:none; }
-  .result-row { margin-bottom:8px; font-size:12px; color:#9A918C; }
-  .result-row span { color:#1F1B1B; font-weight:600; }
-  .copy-btn {
-    background:#3D3835; margin-top:8px; padding:8px 14px; font-size:12px;
-  }
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Apple SD Gothic Neo',sans-serif;background:#FAF7F5}
+.rb{
+  display:none;background:#fff;border:2px solid #E60028;
+  border-radius:8px;padding:12px 16px;margin:0 0 6px;
+}
+.rl{font-size:10px;color:#9A918C;font-weight:700;letter-spacing:.06em}
+.ra{font-size:15px;font-weight:800;color:#1F1B1B;margin:4px 0 2px;word-break:break-all;
+    user-select:all;cursor:text}
+.rj{font-size:11px;color:#9A918C}
+.cs{font-size:12px;font-weight:700;color:#2E7D5B;margin-top:6px}
+#wrap{width:100%;height:400px}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <h3>📍 주소 검색</h3>
-  <button onclick="openSearch()">주소 검색하기</button>
-  <div class="result" id="result">
-    <div class="result-row">도로명 주소: <span id="roadAddr">-</span></div>
-    <div class="result-row">지번 주소: <span id="jibunAddr">-</span></div>
-    <div class="result-row">위도 (lat): <span id="latVal">-</span></div>
-    <div class="result-row">경도 (lng): <span id="lngVal">-</span></div>
-    <button class="copy-btn" onclick="sendResult()">✅ 이 주소 사용하기</button>
-  </div>
+<div class="rb" id="rb">
+  <div class="rl">📋 선택된 주소 — 왼쪽 필드에 Ctrl+V 붙여넣기</div>
+  <div class="ra" id="ra"></div>
+  <div class="rj" id="rj"></div>
+  <div class="cs" id="cs"></div>
 </div>
+<div id="wrap"></div>
 <script>
-var selectedData = null;
-function openSearch() {
-  new daum.Postcode({
-    oncomplete: function(data) {
-      var addr = data.roadAddress || data.jibunAddress;
-      document.getElementById('roadAddr').innerText  = data.roadAddress  || '-';
-      document.getElementById('jibunAddr').innerText = data.jibunAddress || '-';
-      document.getElementById('result').style.display = 'block';
-      // 카카오 지도 Geocoding으로 좌표 변환
-      var geocoder = new kakao.maps.services.Geocoder ? null : null;
-      fetch('https://dapi.kakao.com/v2/local/search/address.json?query=' + encodeURIComponent(addr))
-        .then(r => r.json())
-        .then(res => {
-          var doc = res.documents && res.documents[0];
-          var lat = doc ? doc.y : '';
-          var lng = doc ? doc.x : '';
-          document.getElementById('latVal').innerText = lat || '직접 입력 필요';
-          document.getElementById('lngVal').innerText = lng || '직접 입력 필요';
-          selectedData = { address: addr, lat: lat, lng: lng };
-        })
-        .catch(() => {
-          selectedData = { address: addr, lat: '', lng: '' };
-          document.getElementById('latVal').innerText = '직접 입력 필요';
-          document.getElementById('lngVal').innerText = '직접 입력 필요';
-        });
+new daum.Postcode({
+  width:'100%',
+  height:'400px',
+  oncomplete:function(d){
+    var addr = d.roadAddress || d.jibunAddress;
+    document.getElementById('ra').innerText = addr;
+    document.getElementById('rj').innerText = d.jibunAddress ? '지번: '+d.jibunAddress : '';
+    document.getElementById('rb').style.display = 'block';
+    if(navigator.clipboard){
+      navigator.clipboard.writeText(addr)
+        .then(function(){ document.getElementById('cs').innerText='✅ 클립보드 복사 완료! 왼쪽 주소 필드에 Ctrl+V 하세요'; })
+        .catch(function(){ document.getElementById('cs').innerText='위 주소를 드래그 선택 후 복사하세요'; });
+    } else {
+      document.getElementById('cs').innerText='위 주소를 드래그 선택 후 복사하세요';
     }
-  }).open();
-}
-function sendResult() {
-  if (selectedData) {
-    window.parent.postMessage({ type: 'daum_addr', data: selectedData }, '*');
   }
-}
+}).embed(document.getElementById('wrap'),{autoClose:false});
 </script>
 </body>
-</html>
-"""
+</html>"""
 
 
 # ── 지점 관리 탭 ──────────────────────────────────────────────
 def _render_branch_mgmt():
-    try:
-        from streamlit_javascript import st_javascript
-        _has_stjs = True
-    except ImportError:
-        _has_stjs = False
-
     sec("지점 목록")
     st.caption("계약일·해지일·재계약 여부와 주소를 직접 수정하고 저장하세요. 비활성 지점은 드롭다운에서 자동으로 제외됩니다.")
 
@@ -528,7 +513,6 @@ def _render_branch_mgmt():
     }
 
     df = pd.DataFrame(branches)
-    # address 컬럼이 없을 경우 대비
     for col in ["address", "lat", "lng"]:
         if col not in df.columns:
             df[col] = "" if col == "address" else None
@@ -545,19 +529,17 @@ def _render_branch_mgmt():
         num_rows="fixed",
         key="branch_editor_table",
         column_config={
-            "ID":   st.column_config.NumberColumn("ID", disabled=True, width="small"),
+            "ID":    st.column_config.NumberColumn("ID", disabled=True, width="small"),
             "지점명": st.column_config.TextColumn("지점명", width="medium"),
-            "계약일": st.column_config.TextColumn("계약일", width="small",
-                                                   help="YYYY-MM-DD 형식"),
-            "해지일": st.column_config.TextColumn("해지일", width="small",
-                                                   help="계약 해지일 (비워두면 운영중)"),
+            "계약일": st.column_config.TextColumn("계약일", width="small", help="YYYY-MM-DD 형식"),
+            "해지일": st.column_config.TextColumn("해지일", width="small", help="계약 해지일"),
             "재계약": st.column_config.CheckboxColumn("재계약", width="small",
                                                        help="체크 해제 시 드롭다운에서 제외"),
-            "주소":  st.column_config.TextColumn("주소", width="large"),
-            "비고":  st.column_config.TextColumn("비고", width="medium"),
+            "주소":   st.column_config.TextColumn("주소", width="large"),
+            "비고":   st.column_config.TextColumn("비고", width="medium"),
         },
     )
-    st.caption(f"총 {len(branches)}개 지점 · 셀 클릭 후 수정 → 저장 버튼 클릭 (위도/경도는 아래 편집 폼에서 입력)")
+    st.caption(f"총 {len(branches)}개 지점 · 위도/경도는 아래 '위치 상세 편집'에서 설정")
 
     if st.button("💾 변경사항 저장", key="branch_inline_save", type="primary"):
         changes = st.session_state.get("branch_editor_table", {}).get("edited_rows", {})
@@ -581,114 +563,107 @@ def _render_branch_mgmt():
             st.success(f"✅ {saved_count}개 지점 수정 완료")
             st.rerun()
 
-    # ── 위치 상세 편집 (주소 검색 + 위도/경도 + 지도 미리보기) ──
+    # ── 위치 상세 편집 ───────────────────────────────────────
     st.divider()
     sec("위치 상세 편집")
-    st.caption("지점을 선택하고 주소를 검색하거나 위도/경도를 직접 입력하세요.")
+    st.markdown(
+        '<div class="al al-info">ℹ️&nbsp; '
+        '오른쪽 검색창에서 주소 클릭 → 자동 복사 → 왼쪽 주소 필드에 <b>Ctrl+V</b> → '
+        '<b>위도/경도 자동 변환</b> 버튼 → 저장</div>',
+        unsafe_allow_html=True,
+    )
 
     branch_names = [b["name"] for b in branches]
     sel_br_name  = st.selectbox("편집할 지점 선택", branch_names, key="loc_edit_sel")
     sel_br       = next((b for b in branches if b["name"] == sel_br_name), {})
 
-    loc_col1, loc_col2 = st.columns([2, 1])
+    lat_key = f"loc_lat_{sel_br_name}"
+    lng_key = f"loc_lng_{sel_br_name}"
 
-    with loc_col1:
-        # 주소 입력 + 검색 버튼
+    # 처음 선택 시 DB값으로 초기화
+    if lat_key not in st.session_state:
+        st.session_state[lat_key] = float(sel_br["lat"]) if sel_br.get("lat") else 0.0
+    if lng_key not in st.session_state:
+        st.session_state[lng_key] = float(sel_br["lng"]) if sel_br.get("lng") else 0.0
+
+    edit_col, search_col = st.columns([3, 2])
+
+    with edit_col:
         addr_input = st.text_input(
             "주소",
             value=sel_br.get("address", "") or "",
             key=f"loc_addr_{sel_br_name}",
-            placeholder="주소를 직접 입력하거나 아래 검색 버튼 이용",
+            placeholder="오른쪽 검색창에서 주소 클릭 후 Ctrl+V 붙여넣기",
         )
+
+        if st.button("📍 입력 주소로 위도/경도 자동 변환", key="geocode_btn",
+                     use_container_width=True, type="primary"):
+            addr = st.session_state.get(f"loc_addr_{sel_br_name}", "").strip()
+            if addr:
+                with st.spinner("🔍 좌표 변환 중..."):
+                    lat, lng = _geocode_nominatim(addr)
+                if lat and lng:
+                    st.session_state[lat_key] = lat
+                    st.session_state[lng_key] = lng
+                    st.success(f"✅ 좌표 변환 완료: {lat:.6f}, {lng:.6f}")
+                    st.rerun()
+                else:
+                    st.warning("⚠️ 좌표를 찾지 못했습니다. 주소를 더 구체적으로 입력해보세요.")
+            else:
+                st.warning("주소를 먼저 입력하세요.")
 
         lat_input = st.number_input(
             "위도 (Latitude)",
-            value=float(sel_br["lat"]) if sel_br.get("lat") else 0.0,
-            format="%.6f",
-            step=0.000001,
-            key=f"loc_lat_{sel_br_name}",
+            format="%.6f", step=0.000001,
+            key=lat_key,
         )
         lng_input = st.number_input(
             "경도 (Longitude)",
-            value=float(sel_br["lng"]) if sel_br.get("lng") else 0.0,
-            format="%.6f",
-            step=0.000001,
-            key=f"loc_lng_{sel_br_name}",
+            format="%.6f", step=0.000001,
+            key=lng_key,
         )
 
-        # 카카오맵에서 좌표 확인 링크
-        st.markdown(
-            '<a href="https://map.kakao.com" target="_blank" '
-            'style="font-size:12px;color:#E60028;text-decoration:none;">'
-            '🗺️ 카카오맵에서 좌표 확인하기 →</a><br>'
-            '<span style="font-size:11px;color:#9A918C;">'
-            '지도에서 원하는 위치 우클릭 → "이 위치로 길 찾기" 또는 주소 복사 후 입력</span>',
-            unsafe_allow_html=True,
-        )
-
-        if st.button("💾 위치 정보 저장", key="loc_save_btn", type="primary"):
+        if st.button("💾 위치 정보 저장", key="loc_save_btn", use_container_width=True):
             updated = dict(sel_br)
-            updated["address"] = addr_input.strip()
-            updated["lat"]     = lat_input if lat_input != 0.0 else None
-            updated["lng"]     = lng_input if lng_input != 0.0 else None
+            updated["address"] = st.session_state.get(f"loc_addr_{sel_br_name}", "").strip()
+            updated["lat"]     = float(lat_input) if abs(float(lat_input)) > 0.0001 else None
+            updated["lng"]     = float(lng_input) if abs(float(lng_input)) > 0.0001 else None
             upsert_branch(updated)
+            # 저장 후 session_state 초기화 (다음 번에 DB에서 새로 읽도록)
+            st.session_state.pop(lat_key, None)
+            st.session_state.pop(lng_key, None)
             st.success(f"✅ '{sel_br_name}' 위치 정보 저장 완료")
             st.rerun()
 
-    with loc_col2:
-        # 카카오 주소 검색 팝업 (streamlit-javascript 있을 때)
-        if _has_stjs:
-            st.markdown("**📍 주소 검색**")
-            st.caption("버튼을 누르면 Daum 주소 검색 창이 열립니다.")
-            search_clicked = st.button("주소 검색 열기", key="open_addr_search", use_container_width=True)
-            if search_clicked:
-                st.session_state["show_addr_search"] = True
+    with search_col:
+        st.markdown("**📍 주소 검색**")
+        st.caption("주소 클릭 시 자동 복사 → 왼쪽 주소 필드에 Ctrl+V")
+        st.components.v1.html(_DAUM_EMBED_HTML, height=500, scrolling=False)
 
-            if st.session_state.get("show_addr_search"):
-                st.components.v1.html(_DAUM_POSTCODE_HTML, height=320, scrolling=False)
-                st.caption("💡 주소 선택 후 '이 주소 사용하기' 클릭 → 왼쪽 필드에 직접 복사 입력")
-        else:
-            st.markdown("**📍 좌표 확인 방법**")
-            st.markdown("""
-            1. [카카오맵](https://map.kakao.com) 접속
-            2. 검색창에 지점 주소 검색
-            3. 지점 위치에서 **우클릭**
-            4. 위도/경도 확인 후 왼쪽에 입력
-            """)
+    # ── 지도 미리보기 (좌표 있을 때, 전체 너비) ─────────────
+    lat_v = st.session_state.get(lat_key, float(sel_br["lat"]) if sel_br.get("lat") else 0.0)
+    lng_v = st.session_state.get(lng_key, float(sel_br["lng"]) if sel_br.get("lng") else 0.0)
+    if lat_v and lng_v and abs(float(lat_v)) > 0.001 and abs(float(lng_v)) > 0.001:
+        sec("🗺️ 지도 미리보기")
+        st.markdown(_kakao_map_iframe(float(lat_v), float(lng_v), sel_br_name),
+                    unsafe_allow_html=True)
 
-        # 지도 미리보기
-        lat_v = float(sel_br["lat"]) if sel_br.get("lat") else lat_input
-        lng_v = float(sel_br["lng"]) if sel_br.get("lng") else lng_input
-        if lat_v and lng_v and (lat_v != 0.0 or lng_v != 0.0):
-            st.markdown("**🗺️ 지도 미리보기**")
-            st.markdown(
-                _kakao_map_iframe(lat_v, lng_v, sel_br_name),
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                '<div style="background:#FAF7F5;border:1px dashed #E8E2DE;border-radius:10px;'
-                'height:200px;display:flex;align-items:center;justify-content:center;'
-                'color:#9A918C;font-size:13px;">위도/경도 입력 후 지도가 표시됩니다</div>',
-                unsafe_allow_html=True,
-            )
-
-    # ── 전체 지점 위치 현황 ──
+    # ── 전체 위치 현황 ────────────────────────────────────────
     st.divider()
     all_with_loc = [b for b in branches if b.get("lat") and b.get("lng")]
-    if all_with_loc:
-        sec(f"위치 등록 현황 ({len(all_with_loc)}/{len(branches)}개)")
-        loc_rows = []
-        for b in branches:
-            loc_rows.append({
-                "지점명": b["name"],
-                "주소":   b.get("address", "") or "미입력",
-                "위도":   f"{b['lat']:.6f}" if b.get("lat") else "—",
-                "경도":   f"{b['lng']:.6f}" if b.get("lng") else "—",
-                "상태":   "✅ 등록" if b.get("lat") else "❌ 미등록",
-            })
-        st.dataframe(pd.DataFrame(loc_rows), use_container_width=True, hide_index=True)
+    sec(f"위치 등록 현황 ({len(all_with_loc)}/{len(branches)}개)")
+    loc_rows = []
+    for b in branches:
+        loc_rows.append({
+            "지점명": b["name"],
+            "주소":   b.get("address", "") or "미입력",
+            "위도":   f"{b['lat']:.6f}" if b.get("lat") else "—",
+            "경도":   f"{b['lng']:.6f}" if b.get("lng") else "—",
+            "상태":   "✅ 등록" if b.get("lat") else "❌ 미등록",
+        })
+    st.dataframe(pd.DataFrame(loc_rows), use_container_width=True, hide_index=True)
 
+    # ── 지점 추가 ────────────────────────────────────────────
     st.divider()
     sec("지점 추가")
     c1, c2, c3 = st.columns(3)
