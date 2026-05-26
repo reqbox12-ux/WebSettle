@@ -284,6 +284,15 @@ if not st.session_state.get("authenticated", False):
 _auth_user     = st.session_state.auth_user
 _session_token = st.session_state.get("session_token", _session_token)
 
+# ── 로그아웃 URL 액션 처리 ────────────────────────────────────
+if st.query_params.get("action") == "logout":
+    delete_session(st.query_params.get("t", ""))
+    st.session_state.authenticated = False
+    st.session_state.auth_user     = {}
+    st.session_state.session_token = ""
+    st.query_params.clear()
+    st.rerun()
+
 # ── 라우팅 ────────────────────────────────────────────────────
 page = st.query_params.get("page", "dashboard")
 _now = datetime.now()
@@ -299,34 +308,46 @@ I_PAY    = '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx
 I_RULE   = '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><line x1="9" y1="12" x2="15" y2="12"/><line x1="9" y1="16" x2="12" y2="16"/></svg>'
 I_MOON   = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
 I_SUN    = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'
+I_ACCT   = '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
 
 # ── 사이드바 렌더링 ───────────────────────────────────────────
 def _render_sidebar():
     logo_h = get_logo_html(mobile=False)
-    items  = [
-        ("dashboard", "대시보드",      I_DASH),
-        ("branch",    "지점 상세",     I_BRANCH),
-        ("payroll",   "급여 계산",     I_PAY),
-        ("upload",    "데이터 업로드", I_UP),
-        ("rules",     "규칙 관리",     I_RULE),
-    ]
+
+    def _link(p, lbl, ic):
+        cls = "on" if page == p else ""
+        return (f'<a href="?page={p}&t={_session_token}" target="_self" '
+                f'class="sb-item {cls}">{ic}{lbl}</a>')
+
+    # 섹션별 메뉴
+    ws_nav   = _link("dashboard", "대시보드",    I_DASH)
+    mgmt_nav = _link("branch",    "지점",        I_BRANCH) + \
+               _link("payroll",   "인사",        I_PAY)
+    acct_nav = _link("upload",    "손익 데이터", I_UP) + \
+               _link("rules",     "규칙 데이터", I_RULE)
+
+    # 계정 관리 (admin 전용) — 푸터에 배치
+    acct_mgmt = ""
     if _auth_user.get("role") == "admin":
-        items.append(("accounts", "계정 관리", "👤 "))
+        cls = "on" if page == "accounts" else ""
+        acct_mgmt = (f'<a href="?page=accounts&t={_session_token}" target="_self" '
+                     f'class="sb-item {cls}">{I_ACCT}계정 관리</a>')
 
-    nav = "".join(
-        f'<a href="?page={p}&t={_session_token}" target="_self" class="sb-item {"on" if page == p else ""}">'
-        f'{ic}{lbl}</a>'
-        for p, lbl, ic in items
+    # 로그아웃 링크 (URL 방식)
+    logout_link = (
+        f'<a href="?action=logout&t={_session_token}" target="_self" '
+        f'class="sb-item" style="color:var(--ink3)">🚪 로그아웃</a>'
     )
 
+    # 로그인 사용자 이름
     role_lbl  = "관리자" if _auth_user.get("role") == "admin" else "사용자"
-    user_html = (
-        f'<div style="padding:12px 16px;margin:8px 0;background:var(--sf2);border-radius:var(--rs)">'
-        f'<div style="font-size:12px;color:var(--ink3);margin-bottom:2px">{role_lbl}</div>'
-        f'<div style="font-size:14px;font-weight:600;color:var(--ink)">{_auth_user.get("name","")}</div>'
-        f'</div>'
+    user_name = _auth_user.get("name", "")
+    user_info = (
+        f'<div style="padding:6px 12px 8px;font-size:11px;color:var(--ink4);'
+        f'letter-spacing:.02em">{role_lbl} · {user_name}</div>'
     )
 
+    # 테마 버튼
     if _theme == "light":
         _next_theme, _theme_icon, _theme_lbl = "dark",  I_MOON, "다크 모드"
     else:
@@ -341,29 +362,28 @@ def _render_sidebar():
       <div class="c-sb-logo">{logo_h}</div>
       <div class="c-sb-nav">
         <div class="sb-sec">WORKSPACE</div>
-        {nav}
-        <div style="margin-top:16px">{user_html}</div>
+        {ws_nav}
+        <div class="sb-sec">관리</div>
+        {mgmt_nav}
+        <div class="sb-sec">회계</div>
+        {acct_nav}
       </div>
-      <div class="sb-foot">{theme_link}</div>
+      <div class="sb-foot">
+        {acct_mgmt}
+        {logout_link}
+        {user_info}
+        {theme_link}
+      </div>
     </div>
     """, unsafe_allow_html=True)
-
-    st.markdown('<div style="height:8px"></div>', unsafe_allow_html=True)
-    if st.button("🚪 로그아웃", use_container_width=True, key="logout_btn"):
-        delete_session(_session_token)
-        st.session_state.authenticated = False
-        st.session_state.auth_user     = {}
-        st.session_state.session_token = ""
-        st.query_params.clear()
-        st.rerun()
 
 
 def _render_bnav():
     items = [
         ("dashboard", "대시보드", I_DASH),
         ("branch",    "지점",     I_BRANCH),
-        ("payroll",   "급여",     I_PAY),
-        ("upload",    "업로드",   I_UP),
+        ("payroll",   "인사",     I_PAY),
+        ("upload",    "손익",     I_UP),
         ("rules",     "규칙",     I_RULE),
     ]
     h = '<div class="bnav">'
