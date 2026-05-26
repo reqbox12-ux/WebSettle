@@ -8,7 +8,7 @@ from shared.utils import sec
 from domains.branch.db import get_active_branch_names
 from domains.payroll.db import (
     get_all_employees, get_employees_by_branch,
-    upsert_employee, delete_employee,
+    upsert_employee, delete_employee, deduplicate_employees,
 )
 from domains.payroll.employee.service import import_employees_from_excel
 
@@ -34,6 +34,30 @@ def render():
 
     # ── 직원 목록 ────────────────────────────────────────────
     with tab_list:
+        # 중복 직원 정리 --------------------------------------
+        with st.expander("🧹 중복 직원 정리 (이름 + 지점 기준)", expanded=False):
+            st.caption(
+                "이름과 소속지점이 동일한 중복 직원을 자동으로 정리합니다. "
+                "가장 먼저 등록된 행(최소 ID)을 대표로 남기고 나머지를 삭제합니다. "
+                "연결된 급여 내역은 대표 ID로 자동 재연결됩니다."
+            )
+            if st.button("🧹 지금 중복 정리 실행", key="dedup_btn", type="primary"):
+                result = deduplicate_employees()
+                if result["groups"] == 0:
+                    st.success("✅ 중복 직원이 없습니다. 데이터가 깔끔합니다!")
+                else:
+                    st.success(
+                        f"✅ 정리 완료 — {result['groups']}개 그룹에서 "
+                        f"중복 {result['deleted']}명 삭제"
+                    )
+                    rows = [
+                        {"이름": d["name"], "지점": d["branch"],
+                         "유지 ID": d["kept_id"], "삭제 수": d["removed"]}
+                        for d in result["detail"]
+                    ]
+                    st.dataframe(rows, use_container_width=True, hide_index=True)
+                st.rerun()
+
         col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
         sel_br   = col_f1.selectbox("지점 필터", ["전체"] + BRANCH_LIST, key="emp_br_filter")
         type_filter = col_f2.selectbox("유형 필터", ["전체", "4대보험", "사업소득자", "사업자"],
@@ -215,11 +239,15 @@ def render():
         - **시트3 (사업자)**: 상호명, 소속지점, 사업자구분(일반/면세), 사업자등록번호, 이메일, 비고
         """)
 
+        st.info(
+            "💡 **중복 자동 방지**: 이름 + 소속지점이 동일한 직원이 이미 존재하면 "
+            "덮어쓰기(업데이트)로 처리되므로 재업로드해도 중복이 생기지 않습니다."
+        )
         uploaded = st.file_uploader("직원마스터_초기데이터.xlsx", type=["xlsx"], key="emp_bulk_upload")
         if uploaded and st.button("일괄 등록", type="primary", key="emp_bulk_btn"):
             with st.spinner("처리 중..."):
                 saved, errors = import_employees_from_excel(uploaded)
-            st.success(f"✅ {saved}명/개 등록 완료")
+            st.success(f"✅ {saved}명/개 처리 완료 (신규 등록 또는 정보 업데이트)")
             if errors:
                 for e in errors:
                     st.warning(e)

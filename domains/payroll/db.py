@@ -205,39 +205,109 @@ def get_employees_by_branch(branch: str, active_only: bool = True) -> list[dict]
 
 
 def upsert_employee(data: dict) -> int:
-    """직원 추가/수정. 반환값: employee_id"""
-    conn = get_conn()
+    """
+    직원 추가/수정. 반환값: employee_id
+    - id 있음 → 해당 ID 행 UPDATE
+    - id 없음 → (name, branch) 동일 직원 존재 시 UPDATE, 없으면 INSERT
+      → 엑셀 재업로드·중복 등록 방지
+    """
+    conn   = get_conn()
+    name   = data["name"]
+    branch = data["branch"]
+
+    params_vals = (
+        name, branch, data["emp_type"], data.get("dependents", 1),
+        data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
+        data.get("email", ""), data.get("id_number", ""), data.get("join_date", ""),
+        data.get("is_active", 1), data.get("note", ""),
+    )
+
     if data.get("id"):
+        # 명시적 ID가 있으면 그 행을 업데이트
         conn.execute("""
             UPDATE employees SET
                 name=?, branch=?, emp_type=?, dependents=?,
                 base_salary=?, meal_allowance=?, transport=?,
                 email=?, id_number=?, join_date=?, is_active=?, note=?
             WHERE id=?
-        """, (
-            data["name"], data["branch"], data["emp_type"], data.get("dependents", 1),
-            data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
-            data.get("email", ""), data.get("id_number", ""), data.get("join_date", ""),
-            data.get("is_active", 1), data.get("note", ""),
-            data["id"],
-        ))
-        emp_id = data["id"]
+        """, (*params_vals, data["id"]))
+        emp_id = int(data["id"])
     else:
-        cur = conn.execute("""
-            INSERT INTO employees
-            (name, branch, emp_type, dependents, base_salary, meal_allowance,
-             transport, email, id_number, join_date, is_active, note)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (
-            data["name"], data["branch"], data["emp_type"], data.get("dependents", 1),
-            data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
-            data.get("email", ""), data.get("id_number", ""), data.get("join_date", ""),
-            data.get("is_active", 1), data.get("note", ""),
-        ))
-        emp_id = cur.lastrowid
+        # (name, branch) 기준으로 기존 직원 조회
+        existing = conn.execute(
+            "SELECT id FROM employees WHERE name=? AND branch=? ORDER BY id LIMIT 1",
+            (name, branch),
+        ).fetchone()
+
+        if existing:
+            # 이미 같은 이름+지점 직원이 있으면 UPDATE (중복 방지)
+            emp_id = existing[0]
+            conn.execute("""
+                UPDATE employees SET
+                    name=?, branch=?, emp_type=?, dependents=?,
+                    base_salary=?, meal_allowance=?, transport=?,
+                    email=?, id_number=?, join_date=?, is_active=?, note=?
+                WHERE id=?
+            """, (*params_vals, emp_id))
+        else:
+            cur    = conn.execute("""
+                INSERT INTO employees
+                (name, branch, emp_type, dependents, base_salary, meal_allowance,
+                 transport, email, id_number, join_date, is_active, note)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            """, params_vals)
+            emp_id = cur.lastrowid
+
     conn.commit()
     conn.close()
     return emp_id
+
+
+def deduplicate_employees() -> dict:
+    """
+    (name, branch) 기준 중복 직원 행 정리.
+    - 가장 오래된(id 최소) 행을 대표로 유지
+    - 중복 행의 payroll_entries.employee_id를 대표 ID로 재연결 후 삭제
+    반환: {"groups": 중복 그룹 수, "deleted": 삭제된 행 수, "detail": [...]}
+    """
+    conn    = get_conn()
+    deleted = 0
+    groups  = 0
+    detail  = []
+
+    # (name, branch) 기준 2개 이상인 그룹 탐색
+    dup_rows = conn.execute("""
+        SELECT name, branch, COUNT(*) as cnt, MIN(id) as keep_id
+        FROM employees
+        GROUP BY name, branch
+        HAVING cnt > 1
+    """).fetchall()
+
+    for name, branch, cnt, keep_id in dup_rows:
+        groups += 1
+        # 대표 ID(keep_id) 제외한 나머지 ID 목록
+        dup_ids = [
+            r[0] for r in conn.execute(
+                "SELECT id FROM employees WHERE name=? AND branch=? AND id!=? ORDER BY id",
+                (name, branch, keep_id),
+            ).fetchall()
+        ]
+        for dup_id in dup_ids:
+            # payroll_entries 재연결 (UNIQUE(year,month,employee_id) 충돌 방지: 이미 keep_id 항목 있으면 dup 행 삭제)
+            conn.execute("""
+                UPDATE OR IGNORE payroll_entries
+                SET employee_id=?
+                WHERE employee_id=?
+            """, (keep_id, dup_id))
+            # 재연결 안 된(충돌로 남은) 항목도 삭제
+            conn.execute("DELETE FROM payroll_entries WHERE employee_id=?", (dup_id,))
+            conn.execute("DELETE FROM employees WHERE id=?", (dup_id,))
+            deleted += 1
+        detail.append({"name": name, "branch": branch, "kept_id": keep_id, "removed": len(dup_ids)})
+
+    conn.commit()
+    conn.close()
+    return {"groups": groups, "deleted": deleted, "detail": detail}
 
 
 def delete_employee(employee_id: int) -> bool:
