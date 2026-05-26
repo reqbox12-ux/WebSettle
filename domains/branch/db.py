@@ -6,6 +6,18 @@ from shared.db import get_conn
 from shared.config import BRANCH_LIST as _JSON_BRANCH_LIST
 
 
+def _migrate_branches(conn):
+    """branches 테이블에 address/lat/lng 컬럼 추가 (기존 DB 마이그레이션)"""
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(branches)")}
+    if "address" not in existing:
+        conn.execute("ALTER TABLE branches ADD COLUMN address TEXT DEFAULT ''")
+    if "lat" not in existing:
+        conn.execute("ALTER TABLE branches ADD COLUMN lat REAL DEFAULT NULL")
+    if "lng" not in existing:
+        conn.execute("ALTER TABLE branches ADD COLUMN lng REAL DEFAULT NULL")
+    conn.commit()
+
+
 def init_branch_tables():
     """지점 관리 전용 테이블 생성 + JSON 지점 자동 시딩"""
     conn = get_conn()
@@ -16,6 +28,9 @@ def init_branch_tables():
             contract_date    TEXT DEFAULT '',
             termination_date TEXT DEFAULT '',
             is_active        INTEGER DEFAULT 1,
+            address          TEXT DEFAULT '',
+            lat              REAL DEFAULT NULL,
+            lng              REAL DEFAULT NULL,
             note             TEXT DEFAULT '',
             created_at       TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -39,6 +54,7 @@ def init_branch_tables():
         );
     """)
     conn.commit()
+    _migrate_branches(conn)
 
     # JSON branch_list에 있는 지점 자동 등록 (없는 것만)
     for name in _JSON_BRANCH_LIST:
@@ -81,35 +97,56 @@ def get_active_branch_names() -> list[str]:
 def upsert_branch(data: dict) -> int:
     """지점 추가 또는 수정. id가 없으면 INSERT, 있으면 UPDATE"""
     conn = get_conn()
+    lat = data.get("lat") or None
+    lng = data.get("lng") or None
+    if lat is not None:
+        try:
+            lat = float(lat)
+        except (TypeError, ValueError):
+            lat = None
+    if lng is not None:
+        try:
+            lng = float(lng)
+        except (TypeError, ValueError):
+            lng = None
+
     if not data.get("id"):
         cur = conn.execute(
-            """INSERT INTO branches (name, contract_date, termination_date, is_active, note)
-               VALUES (?, ?, ?, ?, ?)""",
+            """INSERT INTO branches
+               (name, contract_date, termination_date, is_active, address, lat, lng, note)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data.get("name", "").strip(),
                 data.get("contract_date", ""),
                 data.get("termination_date", ""),
                 1 if data.get("is_active", True) else 0,
+                data.get("address", ""),
+                lat, lng,
                 data.get("note", ""),
             ),
         )
         conn.commit()
+        conn.close()
         return cur.lastrowid
     else:
         conn.execute(
             """UPDATE branches
-               SET name=?, contract_date=?, termination_date=?, is_active=?, note=?
+               SET name=?, contract_date=?, termination_date=?, is_active=?,
+                   address=?, lat=?, lng=?, note=?
                WHERE id=?""",
             (
                 data.get("name", "").strip(),
                 data.get("contract_date", ""),
                 data.get("termination_date", ""),
                 1 if data.get("is_active", True) else 0,
+                data.get("address", ""),
+                lat, lng,
                 data.get("note", ""),
                 int(data["id"]),
             ),
         )
         conn.commit()
+        conn.close()
         return int(data["id"])
 
 
