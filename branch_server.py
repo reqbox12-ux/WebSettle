@@ -204,37 +204,37 @@ async def root(request: Request):
 
 @app.get("/login")
 async def login_page(request: Request):
-    return templates.TemplateResponse("login.html", {"request": request})
+    return templates.TemplateResponse(request=request, name="login.html")
 
 
 @app.get("/home")
 async def home_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "home"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "home"})
 
 
 @app.get("/attendance")
 async def attendance_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "attendance"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "attendance"})
 
 
 @app.get("/operations")
 async def operations_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "operations"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "operations"})
 
 
 @app.get("/members")
 async def members_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "members"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "members"})
 
 
 @app.get("/classes")
 async def classes_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "classes"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "classes"})
 
 
 @app.get("/instructors")
 async def instructors_page(request: Request):
-    return templates.TemplateResponse("app.html", {"request": request, "page": "instructors"})
+    return templates.TemplateResponse(request=request, name="app.html", context={"page": "instructors"})
 
 
 # ── Auth API ───────────────────────────────────────────────────────────────────
