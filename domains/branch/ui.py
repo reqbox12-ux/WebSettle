@@ -321,7 +321,9 @@ def render_page():
         unsafe_allow_html=True,
     )
 
-    tab_detail, tab_mgmt, tab_revenue = st.tabs(["📊 지점 상세", "🏢 지점 관리", "📝 월별 매출 입력"])
+    tab_detail, tab_mgmt, tab_revenue, tab_reports = st.tabs(
+        ["📊 지점 상세", "🏢 지점 관리", "📝 월별 매출 입력", "📬 지점 보고"]
+    )
 
     with tab_detail:
         _render_detail(year, month)
@@ -331,6 +333,9 @@ def render_page():
 
     with tab_revenue:
         _render_monthly_revenue(year, month)
+
+    with tab_reports:
+        _render_branch_reports()
 
 
 def _render_detail(year: int, month: int):
@@ -824,3 +829,179 @@ def _render_pdf_section(full_df, br_sel: str, year: int, month: int):
         f'</div>{btn_part}</div>',
         unsafe_allow_html=True,
     )
+
+
+# ── 지점 보고 뷰 (ERP ↔ 랜딩페이지 연동) ─────────────────────────────────────
+def _render_branch_reports():
+    """
+    랜딩페이지(branch_server.py)에서 직원이 올린 보고를 ERP에서 확인.
+    - AS 요청 / 비품 요청 / 오늘 출퇴근 현황
+    공유 DB(settlement.db)를 직접 조회.
+    """
+    from shared.db import get_conn
+    from datetime import date
+
+    today = date.today().isoformat()
+    conn  = get_conn()
+
+    sec("랜딩페이지 연동 보고")
+    st.caption("지점 포털(포트 8502)에서 직원이 제출한 AS·비품 요청과 오늘 출퇴근 현황을 실시간으로 확인합니다.")
+
+    col1, col2, col3 = st.columns(3)
+
+    # ── AS 요청 현황
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM as_requests WHERE status='open'"
+        )
+        open_as = cur.fetchone()[0]
+        cur2 = conn.execute(
+            "SELECT COUNT(*) FROM as_requests WHERE status='open' AND priority='urgent'"
+        )
+        urgent_as = cur2.fetchone()[0]
+        col1.metric("🔧 처리 대기 AS", f"{open_as}건", f"긴급 {urgent_as}건" if urgent_as else "정상")
+    except Exception:
+        col1.metric("🔧 AS 요청", "—", "테이블 없음")
+
+    # ── 비품 요청 현황
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(*) FROM supply_requests WHERE status='pending'"
+        )
+        pend_supply = cur.fetchone()[0]
+        col2.metric("📦 승인 대기 비품", f"{pend_supply}건")
+    except Exception:
+        col2.metric("📦 비품 요청", "—", "테이블 없음")
+
+    # ── 오늘 출퇴근
+    try:
+        cur = conn.execute(
+            "SELECT COUNT(DISTINCT employee_id) FROM attendance WHERE work_date=?", (today,)
+        )
+        att_cnt = cur.fetchone()[0]
+        col3.metric("🕐 오늘 출근", f"{att_cnt}명", today)
+    except Exception:
+        col3.metric("🕐 오늘 출근", "—", "테이블 없음")
+
+    st.divider()
+
+    # ── AS 요청 목록
+    sec("AS 요청 목록")
+    branch_filter = st.selectbox("지점 필터", ["전체"] + get_active_branch_names(), key="rpt_br_as")
+    status_filter = st.selectbox("상태", ["전체", "open", "in_progress", "resolved"], key="rpt_st_as")
+
+    try:
+        q = "SELECT * FROM as_requests WHERE 1=1"
+        params: list = []
+        if branch_filter != "전체":
+            q += " AND branch=?"; params.append(branch_filter)
+        if status_filter != "전체":
+            q += " AND status=?"; params.append(status_filter)
+        q += " ORDER BY CASE priority WHEN 'urgent' THEN 0 WHEN 'normal' THEN 1 ELSE 2 END, created_at DESC"
+        cur = conn.execute(q, params)
+        cols = [d[0] for d in cur.description]
+        rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+
+        if rows:
+            PRIO_LABEL = {"urgent": "🔴 긴급", "normal": "🟡 보통", "low": "🟢 낮음"}
+            STATUS_LABEL = {"open": "접수", "in_progress": "처리중", "resolved": "완료"}
+            df_as = pd.DataFrame([{
+                "ID": r["id"], "지점": r["branch"],
+                "제목": r["title"], "우선순위": PRIO_LABEL.get(r["priority"], r["priority"]),
+                "상태": STATUS_LABEL.get(r["status"], r["status"]),
+                "담당자": r.get("assigned_to", ""), "접수일": r["created_at"][:16],
+            } for r in rows])
+            st.dataframe(df_as, use_container_width=True, hide_index=True)
+
+            # 빠른 상태 변경
+            with st.expander("⚡ 상태 일괄 변경"):
+                sel_id  = st.number_input("AS 요청 ID", min_value=1, step=1, key="as_chg_id")
+                new_st  = st.selectbox("새 상태", ["in_progress", "resolved"], key="as_chg_st")
+                assigned = st.text_input("담당자 (선택)", key="as_chg_who")
+                note_txt = st.text_input("처리 메모", key="as_chg_note")
+                if st.button("변경 저장", key="as_chg_btn", type="primary"):
+                    conn2 = get_conn()
+                    conn2.execute(
+                        "UPDATE as_requests SET status=?, assigned_to=?, note=? WHERE id=?",
+                        (new_st, assigned, note_txt, int(sel_id))
+                    )
+                    conn2.commit(); conn2.close()
+                    st.success("✅ 상태 변경 완료"); st.rerun()
+        else:
+            st.info("조건에 맞는 AS 요청이 없습니다.")
+    except Exception as e:
+        st.warning(f"AS 요청 조회 실패: {e}")
+
+    st.divider()
+
+    # ── 비품 요청 목록
+    sec("비품 구매 요청")
+    try:
+        q2 = "SELECT * FROM supply_requests WHERE 1=1"
+        p2: list = []
+        if branch_filter != "전체":
+            q2 += " AND branch=?"; p2.append(branch_filter)
+        q2 += " ORDER BY created_at DESC LIMIT 50"
+        cur2 = conn.execute(q2, p2)
+        cols2 = [d[0] for d in cur2.description]
+        rows2 = [dict(zip(cols2, r)) for r in cur2.fetchall()]
+
+        if rows2:
+            ST2 = {"pending": "대기", "approved": "승인", "rejected": "반려", "delivered": "납품완료"}
+            df_sup = pd.DataFrame([{
+                "ID": r["id"], "지점": r["branch"], "품목": r["item_name"],
+                "수량": f'{r["quantity"]}{r["unit"]}', "사유": r.get("reason", ""),
+                "상태": ST2.get(r["status"], r["status"]),
+                "요청일": r["created_at"][:16],
+            } for r in rows2])
+            st.dataframe(df_sup, use_container_width=True, hide_index=True)
+
+            with st.expander("⚡ 승인 / 반려"):
+                sup_id  = st.number_input("비품 요청 ID", min_value=1, step=1, key="sup_chg_id")
+                sup_act = st.radio("처리", ["approved", "rejected", "delivered"], horizontal=True, key="sup_chg_act")
+                sup_by  = st.text_input("처리자", key="sup_chg_by")
+                rej_rsn = st.text_input("반려 사유 (반려 시)", key="sup_rej_rsn")
+                if st.button("처리 저장", key="sup_chg_btn", type="primary"):
+                    conn3 = get_conn()
+                    conn3.execute(
+                        "UPDATE supply_requests SET status=?, approved_by=?, reject_reason=? WHERE id=?",
+                        (sup_act, sup_by, rej_rsn, int(sup_id))
+                    )
+                    conn3.commit(); conn3.close()
+                    st.success("✅ 처리 완료"); st.rerun()
+        else:
+            st.info("비품 요청이 없습니다.")
+    except Exception as e:
+        st.warning(f"비품 요청 조회 실패: {e}")
+
+    st.divider()
+
+    # ── 오늘 출퇴근 현황
+    sec(f"오늘 출퇴근 현황 ({today})")
+    try:
+        cur3 = conn.execute("""
+            SELECT a.employee_id, e.name, e.branch,
+                   a.clock_in, a.clock_out, a.work_hours, a.is_late
+            FROM attendance a
+            LEFT JOIN employees e ON a.employee_id = e.id
+            WHERE a.work_date = ?
+            ORDER BY e.branch, a.clock_in
+        """, (today,))
+        cols3 = [d[0] for d in cur3.description]
+        rows3 = [dict(zip(cols3, r)) for r in cur3.fetchall()]
+
+        if rows3:
+            df_att = pd.DataFrame([{
+                "이름": r.get("name", "—"), "지점": r.get("branch", ""),
+                "출근": (r.get("clock_in") or "")[:5],
+                "퇴근": (r.get("clock_out") or "근무중")[:5] if r.get("clock_out") else "근무중",
+                "근무시간": f'{r.get("work_hours") or 0:.1f}h',
+                "지각": "⚠️" if r.get("is_late") else "✅",
+            } for r in rows3])
+            st.dataframe(df_att, use_container_width=True, hide_index=True)
+        else:
+            st.info("오늘 출퇴근 기록이 없습니다.")
+    except Exception as e:
+        st.warning(f"출퇴근 현황 조회 실패: {e}")
+
+    conn.close()

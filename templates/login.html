@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>로그인 — 라온스포츠 포털</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/wanteddev/wanted-sans@v1.0.3/packages/wanted-sans/fonts/webfonts/variable/split/WantedSansVariable.min.css">
+  <link rel="stylesheet" href="/static/css/landing.css">
+  <style>
+    /* Extra login-page specifics */
+    .login-headline {
+      font-family: var(--font-display);
+      font-size: 48px;
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      margin: 0 0 16px;
+      white-space: pre-line;
+    }
+    .login-sub {
+      font-size: 14px;
+      line-height: 1.7;
+      color: rgba(255,255,255,.72);
+      max-width: 480px;
+    }
+    .art-logo {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .art-logo .mark {
+      width: 44px; height: 44px; border-radius: 13px;
+      background: var(--accent);
+      color: #fff;
+      display: grid; place-items: center;
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 22px;
+      letter-spacing: -0.02em;
+      box-shadow: inset 0 -3px 0 rgba(0,0,0,.22);
+      flex-shrink: 0;
+    }
+    .art-logo .name {
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 20px;
+      letter-spacing: -0.025em;
+    }
+    .art-logo .sub {
+      font-size: 12px; color: rgba(255,255,255,.55); margin-top: 2px;
+    }
+    .art-footer {
+      font-size: 12px; color: rgba(255,255,255,.4);
+    }
+
+    /* Role toggle in login */
+    .login-role-toggle {
+      display: grid; grid-template-columns: 1fr 1fr;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 12px; padding: 4px;
+      gap: 4px;
+      margin-bottom: 22px;
+    }
+    .login-role-toggle button {
+      border: 0; background: none; cursor: pointer;
+      padding: 10px 8px;
+      border-radius: 9px;
+      font-size: 12.5px; font-weight: 600;
+      color: var(--muted);
+      line-height: 1.4;
+      text-align: center;
+    }
+    .login-role-toggle button.on {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: var(--shadow-sm);
+    }
+    .login-role-toggle button.on.staff { background: var(--accent); color: #fff; }
+
+    .pw-row {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 13px;
+    }
+    .pw-row a { color: var(--muted); font-size: 12.5px; }
+    .pw-row a:hover { color: var(--ink); }
+
+    .signup-row {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12.5px; color: var(--muted); margin-top: 18px;
+    }
+    .signup-row a { color: var(--muted); }
+    .signup-row a:hover { color: var(--ink); }
+
+    .error-msg {
+      background: var(--accent-soft);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+
+    .btn-submit {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; height: 48px;
+      background: var(--accent); color: #fff;
+      border: 0; border-radius: 12px;
+      font-size: 15px; font-weight: 700;
+      cursor: pointer;
+      margin-top: 20px;
+      letter-spacing: -0.01em;
+      transition: background .12s, transform .08s;
+    }
+    .btn-submit:hover { background: var(--accent-2); }
+    .btn-submit:active { transform: translateY(1px); }
+    .btn-submit:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-submit svg { width: 18px; height: 18px; }
+
+    /* Dark mode toggle */
+    .dark-toggle {
+      position: fixed; top: 18px; right: 18px;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: rgba(255,255,255,.15);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.2);
+      display: grid; place-items: center;
+      cursor: pointer; color: #fff;
+      font-size: 18px;
+    }
+    [data-theme="dark"] .dark-toggle { background: rgba(255,255,255,.08); }
+  </style>
+</head>
+<body>
+  <button class="dark-toggle" id="themeBtn" title="다크모드 전환" onclick="toggleTheme()">🌙</button>
+
+  <div class="login-shell">
+    <!-- Left: Art side -->
+    <div class="login-art">
+      <div class="art-logo">
+        <div class="mark">라</div>
+        <div>
+          <div class="name">RAON SPORTS</div>
+          <div class="sub">지점 통합 포털</div>
+        </div>
+      </div>
+
+      <div>
+        <h1 class="login-headline">오늘의 한 세트,&#10;라온과 함께.</h1>
+        <p class="login-sub">직원과 회원이 같은 공간에서 — 출퇴근부터 GX 등록, 이벤트 참여까지.<br>라온스포츠 통합 포털에서 모든 흐름을 한 번에.</p>
+      </div>
+
+      <div class="art-footer">© 2026 RAON SPORTS · v 3.0.0</div>
+    </div>
+
+    <!-- Right: Form side -->
+    <div class="login-form-side">
+      <div class="login-card">
+        <h1>로그인</h1>
+        <p class="sub">라온스포츠 통합 포털에 오신 것을 환영합니다</p>
+
+        <!-- Role toggle -->
+        <div class="login-role-toggle" id="roleToggle">
+          <button class="on staff" id="btnStaff" onclick="selectRole('staff')">
+            직원으로 로그인<br><span style="font-size:11px;font-weight:500;opacity:.8">전체 메뉴 활성</span>
+          </button>
+          <button id="btnMember" onclick="selectRole('member')">
+            회원으로 로그인<br><span style="font-size:11px;font-weight:500;opacity:.8">수업·이벤트·커뮤니티</span>
+          </button>
+        </div>
+
+        <!-- Error message -->
+        <div class="error-msg" id="errorMsg"></div>
+
+        <!-- Form -->
+        <form id="loginForm" onsubmit="handleLogin(event)">
+          <div class="field">
+            <label class="field-label" for="identifier">아이디 / 이메일</label>
+            <input class="input" type="text" id="identifier" name="identifier"
+                   placeholder="raon@example.com" autocomplete="username" required>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="password">비밀번호</label>
+            <input class="input" type="password" id="password" name="password"
+                   placeholder="••••••••" autocomplete="current-password" required>
+          </div>
+
+          <div class="pw-row">
+            <label class="checkbox">
+              <input type="checkbox" id="keepLogin"> 로그인 유지
+            </label>
+            <a href="#">비밀번호 찾기</a>
+          </div>
+
+          <button class="btn-submit" type="submit" id="submitBtn">
+            로그인
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="signup-row">
+          <span>계정이 없나요?</span>
+          <a href="#">관리자에게 문의</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentRole = 'staff';
+
+    function selectRole(role) {
+      currentRole = role;
+      const btnStaff = document.getElementById('btnStaff');
+      const btnMember = document.getElementById('btnMember');
+      if (role === 'staff') {
+        btnStaff.className = 'on staff';
+        btnMember.className = '';
+        document.getElementById('identifier').placeholder = 'raon@example.com';
+      } else {
+        btnStaff.className = '';
+        btnMember.className = 'on';
+        document.getElementById('identifier').placeholder = '전화번호 또는 이메일';
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function hideError() {
+      document.getElementById('errorMsg').classList.remove('show');
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      hideError();
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = '로그인 중…';
+
+      const identifier = document.getElementById('identifier').value.trim();
+      const password = document.getElementById('password').value;
+      const keepLogin = document.getElementById('keepLogin').checked;
+
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: currentRole, identifier, password })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.detail || '로그인 정보가 올바르지 않습니다.');
+          return;
+        }
+        // Save token
+        if (keepLogin) {
+          localStorage.setItem('raon_token', data.token);
+        } else {
+          sessionStorage.setItem('raon_token', data.token);
+          localStorage.removeItem('raon_token');
+        }
+        localStorage.setItem('raon_role', data.role);
+        localStorage.setItem('raon_name', data.name);
+        localStorage.setItem('raon_branch', data.branch || '');
+        window.location.href = '/home';
+      } catch (err) {
+        showError('네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '로그인 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+      }
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      const isDark = html.getAttribute('data-theme') === 'dark';
+      html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      document.getElementById('themeBtn').textContent = isDark ? '🌙' : '☀️';
+      localStorage.setItem('raon_theme', isDark ? 'light' : 'dark');
+    }
+
+    // Restore theme
+    const savedTheme = localStorage.getItem('raon_theme');
+    if (savedTheme) {
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      document.getElementById('themeBtn').textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+    }
+
+    // If already logged in, redirect
+    const token = localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token');
+    if (token) {
+      window.location.href = '/home';
+    }
+  </script>
+</body>
+</html>
