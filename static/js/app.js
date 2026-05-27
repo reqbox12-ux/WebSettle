@@ -83,9 +83,9 @@
       <div class="app">
         <nav class="sidebar">
           <div class="brand">
-            <div class="brand-mark">라</div>
+            <img src="/static/img/logo.png" alt="LAONSPORTS" style="height:32px;object-fit:contain;filter:var(--logo-filter,none);">
             <div>
-              <div class="brand-name">RAON SPORTS</div>
+              <div class="brand-name">LAONSPORTS</div>
               <div class="brand-sub">${user.branch || '지점 포털'}</div>
             </div>
           </div>
