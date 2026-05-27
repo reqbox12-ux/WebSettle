@@ -6,10 +6,12 @@ services:
     container_name: settlement-dashboard
     restart: unless-stopped
     ports:
-      - "8501:8501"
+      - "8501:8501"   # ERP (Streamlit)
+      - "8502:8502"   # 지점 포털 (FastAPI)
     volumes:
       - ./data:/app/data
       - ./mapping:/app/mapping
+      - ./static/uploads:/app/static/uploads
     environment:
       - TZ=Asia/Seoul
     healthcheck:

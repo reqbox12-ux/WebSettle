@@ -14,15 +14,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # 앱 코드 복사
 COPY . .
 
-# 데이터 폴더 생성
-RUN mkdir -p /app/data
+# 데이터 폴더 / 업로드 폴더 생성
+RUN mkdir -p /app/data /app/static/uploads
 
-EXPOSE 8501
+# 시작 스크립트 실행 권한
+RUN chmod +x /app/start.sh
+
+# 포트 노출 (ERP: 8501, 지점포털: 8502)
+EXPOSE 8501 8502
 
 HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
 
-CMD ["streamlit", "run", "app.py", \
-     "--server.headless=true", \
-     "--server.port=8501", \
-     "--server.address=0.0.0.0", \
-     "--browser.gatherUsageStats=false"]
+CMD ["/bin/bash", "/app/start.sh"]
