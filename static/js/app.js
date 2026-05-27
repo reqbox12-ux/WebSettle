@@ -249,11 +249,8 @@
       <div class="app">
         <nav class="sidebar">
           <div class="brand">
-            <img src="/static/img/logo.png" alt="LAONSPORTS" style="height:32px;object-fit:contain;">
-            <div>
-              <div class="brand-name">LAONSPORTS</div>
-              <div class="brand-sub">${user.branch || '지점 포털'}</div>
-            </div>
+            <img src="/static/img/logo.png" alt="LAONSPORTS" style="height:36px;object-fit:contain;">
+            <span class="brand-sub" style="font-size:14px;font-weight:700;margin-left:4px">${user.branch || '지점 포털'}</span>
           </div>
           <div class="nav-group">
             <div class="nav-label">메뉴</div>
@@ -360,7 +357,7 @@
 
       container.innerHTML = `
         <div class="page">
-          <div class="marquee"><div class="marquee-track">${marqueeText + '    ·    ' + marqueeText}</div></div>
+          <div class="marquee"><div class="marquee-wrap"><div class="marquee-track">${marqueeText + '    ·    ' + marqueeText}</div></div></div>
           <div class="hero-grid">${heroHTML}<div class="hero-side">${sideHTML}</div></div>
           <div style="margin-top:28px">
             <div class="card-head">
