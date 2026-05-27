@@ -11,7 +11,8 @@ services:
     volumes:
       - ./data:/app/data
       - ./mapping:/app/mapping
-      - ./static/uploads:/app/static/uploads
+      - ./static:/app/static        # JS/CSS/이미지 변경 시 재빌드 불필요
+      - ./templates:/app/templates  # HTML 템플릿 변경 시 재빌드 불필요
     environment:
       - TZ=Asia/Seoul
     healthcheck:
