@@ -40,12 +40,16 @@ def _delta_badge(curr: float, prev: float) -> str:
 
 # ── 전월 대비 KPI 카드 ────────────────────────────────────────
 def _render_mom_kpi(curr: dict, prev: dict):
+    card_curr = curr.get("카드공급가액", 0) + curr.get("카드VAT", 0) + curr.get("카드수수료", 0)
+    card_prev = prev.get("카드공급가액", 0) + prev.get("카드VAT", 0) + prev.get("카드수수료", 0)
+    cash_curr = curr.get("현금공급가액", 0) + curr.get("현금VAT", 0)
+    cash_prev = prev.get("현금공급가액", 0) + prev.get("현금VAT", 0)
     items = [
-        ("총 매출",   curr["총매출"],       prev["총매출"],       "c-ink"),
-        ("카드 실수령", curr["카드실수령"],   prev["카드실수령"],   "c-ink"),
-        ("현금 매출", curr["현금공급가액"],  prev["현금공급가액"], "c-ink"),
-        ("총 지출",   curr["총지출"],        prev["총지출"],        "c-red"),
-        ("순 손익",   curr["손익"],          prev["손익"],
+        ("총 매출",   curr["총매출"],  prev["총매출"],  "c-ink"),
+        ("카드 매출", card_curr,       card_prev,       "c-ink"),
+        ("현금 매출", cash_curr,       cash_prev,       "c-ink"),
+        ("총 지출",   curr["총지출"],  prev["총지출"],  "c-red"),
+        ("순 손익",   curr["손익"],    prev["손익"],
          "c-pos" if curr["손익"] >= 0 else "c-red"),
     ]
     html = '<div class="kpi-grid">'
@@ -153,25 +157,37 @@ def _render_pnl_panel(row: dict, year: int, month: int):
             f'</div>'
         )
 
-    # 수익 섹션
+    # 수익 섹션 — 카드(공급가액+VAT+수수료) + 현금(총입금) + 직접입력
     rev_html = '<div style="font-size:10px;font-weight:700;color:var(--ink3);letter-spacing:.07em;text-transform:uppercase;padding-bottom:8px;border-bottom:1px solid var(--bd);margin-bottom:2px">수 익</div>'
-    for cat in CARD_CATS:
-        v = int(rev_by_cat.get(cat, 0))
-        if v > 0:
-            rev_html += _row(cat, v, indent=True)
-    if int(row.get("카드수수료", 0)) > 0:
-        rev_html += _row(f"카드수수료 차감", -int(row["카드수수료"]), indent=True)
-    rev_html += _row("카드 실수령", row["카드실수령"], bold=True)
 
-    for cat in CASH_CATS:
-        v = int(rev_by_cat.get(cat, 0))
-        if v > 0:
-            rev_html += _row(cat, v, indent=True)
-    if int(row.get("현금VAT", 0)) > 0:
-        rev_html += _row("부가세 차감", -int(row["현금VAT"]), indent=True)
-    rev_html += _row("현금 공급가액", row["현금공급가액"], bold=True)
+    # 카드 매출: 공급가액 + VAT + 수수료 = 총액
+    card_supply_v = int(row.get("카드공급가액", 0))
+    card_vat_v    = int(row.get("카드VAT", 0))
+    card_fee_v    = int(row.get("카드수수료", 0))
+    card_total_v  = card_supply_v + card_vat_v + card_fee_v
+    if card_total_v > 0:
+        if card_supply_v > 0:
+            rev_html += _row("카드 공급가액", card_supply_v, indent=True)
+        if card_vat_v > 0:
+            rev_html += _row("카드 VAT", card_vat_v, indent=True)
+        if card_fee_v > 0:
+            rev_html += _row("카드 수수료", card_fee_v, indent=True)
+        rev_html += _row("카드 소계", card_total_v, bold=True)
 
-    # 수동입력 매출 섹션
+    # 현금 매출: 카테고리별 공급가액 + VAT = 총입금
+    cash_supply_v = int(row.get("현금공급가액", 0))
+    cash_vat_v    = int(row.get("현금VAT", 0))
+    cash_total_v  = cash_supply_v + cash_vat_v
+    if cash_total_v > 0:
+        for cat in CASH_CATS:
+            v = int(rev_by_cat.get(cat, 0))
+            if v > 0:
+                rev_html += _row(cat, v, indent=True)
+        if cash_vat_v > 0:
+            rev_html += _row("현금 VAT", cash_vat_v, indent=True)
+        rev_html += _row("현금 소계", cash_total_v, bold=True)
+
+    # 수동입력 매출
     bmr_total = int(row.get("수동입력매출", 0))
     if bmr_total > 0:
         for db_col, label in BMR_LABELS:
@@ -212,7 +228,9 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         exp_html += _row("기타지출 합계", row["기타지출"], bold=True)
 
     if int(row.get("부가세합계", 0)) > 0:
-        exp_html += _row("부가세 합계", row["부가세합계"], bold=True)
+        exp_html += _row("부가세합계 (카드VAT + 현금VAT)", row["부가세합계"], bold=True)
+    if int(row.get("카드수수료", 0)) > 0:
+        exp_html += _row("카드수수료", row["카드수수료"], bold=True)
 
     # 총지출 합계
     exp_html += (
@@ -237,7 +255,7 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         f'<div style="font-size:20px;font-weight:800;color:{pnl_col};font-feature-settings:\'tnum\' 1">'
         f'{sign} {fn(abs(pnl))}원</div>'
         f'<div style="font-size:13px;font-weight:600;color:{pnl_col}">'
-        f'{"+" if rate >= 0 else ""}{rate:.1f}%</div>'
+        f'이익률 {rate:.1f}% (매출÷지출)</div>'
         f'</div></div>'
     )
 

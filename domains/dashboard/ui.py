@@ -15,24 +15,28 @@ _now = datetime.now()
 # ── KPI 카드 ────────────────────────────────────────────────
 def render_kpi(df):
     tot_rev  = df["총매출"].sum()
-    card_rev = df["카드실수령"].sum()
-    cash_rev = df["현금공급가액"].sum()
+    # 카드 매출 = 공급가액 + VAT + 수수료 (총액)
+    card_rev = (df["카드공급가액"].fillna(0)
+                + df["카드VAT"].fillna(0)
+                + df["카드수수료"].fillna(0)).sum()
+    # 현금 매출 = 공급가액 + VAT (총입금액)
+    cash_rev = (df["현금공급가액"].fillna(0) + df["현금VAT"].fillna(0)).sum()
     tot_exp  = df["총지출"].sum()
     tot_pnl  = df["손익"].sum()
-    rate     = round(tot_pnl / tot_rev * 100, 1) if tot_rev else 0
+    # 이익률 = 총매출 ÷ 총지출 × 100  (100% 초과 = 흑자)
+    rate     = round(tot_rev / tot_exp * 100, 1) if tot_exp else 0
     pc       = (df["손익"] > 0).sum()
     tc       = len(df[df["총매출"] > 0])
     sign_pnl = "▲" if tot_pnl >= 0 else "▼"
-    sign_rt  = "+" if rate >= 0 else ""
 
     cards = [
-        ("카드 매출",  fw(card_rev), "원", "공급가액 기준 실수령",        "c-ink"),
-        ("현금 매출",  fw(cash_rev), "원", "입금 – 부가세",                "c-ink"),
-        ("총 지출",    fw(tot_exp),  "원", "인건비 + 부가세 + 기타",        "c-red"),
+        ("카드 매출",  fw(card_rev), "원", "공급가액+VAT+수수료",           "c-ink"),
+        ("현금 매출",  fw(cash_rev), "원", "공급가액+VAT (총입금)",          "c-ink"),
+        ("총 지출",    fw(tot_exp),  "원", "인건비 + 기타 + 부가세 + 수수료", "c-red"),
         ("순 손익",    f"{sign_pnl} {fw(abs(tot_pnl))}", "원", "총매출 – 총지출",
          "c-pos" if tot_pnl >= 0 else "c-red"),
-        ("이익률",     f"{sign_rt}{rate}", "%", f"흑자 {pc} / {tc} 지점",
-         "c-pos" if rate >= 0 else "c-red"),
+        ("이익률",     f"{rate}", "%", f"매출÷지출 · 흑자 {pc} / {tc} 지점",
+         "c-pos" if rate >= 100 else "c-red"),
     ]
     html = '<div class="kpi-grid">'
     for lbl, val, unit, sub, cls in cards:
@@ -100,7 +104,7 @@ def render_rank_cards(df):
         pnl_col  = "var(--pos)" if is_top else "var(--red)"
         bg       = "var(--poss)" if is_top else "var(--reds)"
         rate_col = "var(--pos)" if is_top else "var(--red)"
-        rate_sign = "+" if rate >= 0 else ""
+        rate_sign = ""
         return (
             f'<div style="display:flex;align-items:center;justify-content:space-between;'
             f'padding:10px 14px;border-radius:var(--rs);background:{bg};margin-bottom:6px">'
@@ -210,16 +214,18 @@ def render_page():
             bdg_cls  = "bdg-pos" if pnl >= 0 else "bdg-neg"
             rate_col = "color:var(--pos)" if rt >= 0 else "color:var(--red)"
             sel_cls  = "sel" if st.session_state.drill == row.branch else ""
+            card_tot = int(row.get("카드공급가액", 0) + row.get("카드VAT", 0) + row.get("카드수수료", 0))
+            cash_tot = int(row.get("현금공급가액", 0) + row.get("현금VAT", 0))
             table_html += (
                 f'<tr class="{sel_cls}">'
                 f'<td>{row.branch}</td>'
-                f'<td>{fw(row["카드실수령"])}</td>'
-                f'<td>{fw(row["현금공급가액"])}</td>'
+                f'<td>{fw(card_tot)}</td>'
+                f'<td>{fw(cash_tot)}</td>'
                 f'<td>{fw(row["총지출"])}</td>'
                 f'<td style="text-align:center">'
                 f'<span class="bdg {bdg_cls}">{sign} {fw(abs(pnl))}</span>'
                 f'&nbsp;<span style="font-size:11.5px;{rate_col}">'
-                f'{"+" if rt >= 0 else ""}{rt}%</span></td>'
+                f'{rt}%</span></td>'
                 f'</tr>'
             )
         table_html += '</tbody></table></div>'
