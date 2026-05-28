@@ -624,6 +624,11 @@ def upsert_payroll(df: pd.DataFrame, year: int, month: int, pay_type: str):
 
 
 def get_payroll_summary(year: int, month: int = None, branch: str = None):
+    """
+    급여 집계 반환.
+    우선순위: payroll_entries(인사탭 계산) > payroll(엑셀 업로드)
+    동일 branch+month 조합은 payroll_entries 데이터를 사용하고 payroll은 무시.
+    """
     if USE_POSTGRES:
         filters = ["year=:year"]
         params = {"year": year}
@@ -650,30 +655,81 @@ def get_payroll_summary(year: int, month: int = None, branch: str = None):
         return df
     else:
         conn = get_conn()
-        filters = ["year=?"]
-        params = [year]
+
+        # ── ① payroll_entries (인사탭) 집계 ──────────────────────────
+        pe_filters = ["pe.year=?"]
+        pe_params  = [year]
         if month:
-            filters.append("month=?")
-            params.append(month)
+            pe_filters.append("pe.month=?")
+            pe_params.append(month)
         if branch:
-            filters.append("branch=?")
-            params.append(branch)
-        where = " AND ".join(filters)
-        query = f"""
-            SELECT branch, month, type,
-                   SUM(gross_pay)  as gross_pay,
-                   SUM(net_pay)    as net_pay,
-                   SUM(insurance)  as insurance,
-                   SUM(income_tax) as income_tax,
-                   SUM(local_tax)  as local_tax,
-                   SUM(headcount)  as headcount
-            FROM payroll
-            WHERE {where}
-            GROUP BY branch, month, type
-        """
-        df = pd.read_sql(query, conn, params=params)
+            pe_filters.append("pe.branch=?")
+            pe_params.append(branch)
+        pe_where = " AND ".join(pe_filters)
+
+        try:
+            df_pe = pd.read_sql(f"""
+                SELECT pe.branch,
+                       pe.month,
+                       pe.emp_type                                          AS type,
+                       SUM(pe.gross_pay)                                    AS gross_pay,
+                       SUM(pe.net_pay)                                      AS net_pay,
+                       SUM(pe.pension_emp + pe.health_emp + pe.employ_emp)  AS insurance,
+                       SUM(pe.income_tax)                                   AS income_tax,
+                       SUM(pe.local_tax)                                    AS local_tax,
+                       COUNT(*)                                             AS headcount
+                FROM payroll_entries pe
+                WHERE {pe_where}
+                GROUP BY pe.branch, pe.month, pe.emp_type
+            """, conn, params=pe_params)
+        except Exception:
+            df_pe = pd.DataFrame()
+
+        # ── ② payroll (엑셀 업로드) 집계 ─────────────────────────────
+        p_filters = ["year=?"]
+        p_params  = [year]
+        if month:
+            p_filters.append("month=?")
+            p_params.append(month)
+        if branch:
+            p_filters.append("branch=?")
+            p_params.append(branch)
+        p_where = " AND ".join(p_filters)
+
+        try:
+            df_p = pd.read_sql(f"""
+                SELECT branch, month, type,
+                       SUM(gross_pay)  AS gross_pay,
+                       SUM(net_pay)    AS net_pay,
+                       SUM(insurance)  AS insurance,
+                       SUM(income_tax) AS income_tax,
+                       SUM(local_tax)  AS local_tax,
+                       SUM(headcount)  AS headcount
+                FROM payroll
+                WHERE {p_where}
+                GROUP BY branch, month, type
+            """, conn, params=p_params)
+        except Exception:
+            df_p = pd.DataFrame()
+
         conn.close()
-        return df
+
+        # ── ③ 병합: payroll_entries 우선, 중복 branch+month는 payroll 제외 ─
+        if df_pe.empty and df_p.empty:
+            return pd.DataFrame(columns=["branch","month","type","gross_pay",
+                                         "net_pay","insurance","income_tax",
+                                         "local_tax","headcount"])
+        if df_pe.empty:
+            return df_p
+        if df_p.empty:
+            return df_pe
+
+        # payroll_entries에 있는 (branch, month) 조합은 payroll에서 제외
+        pe_keys = set(zip(df_pe["branch"].astype(str), df_pe["month"].astype(str)))
+        mask    = ~df_p.apply(
+            lambda r: (str(r["branch"]), str(r["month"])) in pe_keys, axis=1
+        )
+        return pd.concat([df_pe, df_p[mask]], ignore_index=True)
 
 
 # ── 4대보험 본사/직원 부담 ────────────────────────────────────────
