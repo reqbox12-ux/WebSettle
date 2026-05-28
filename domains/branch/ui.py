@@ -255,7 +255,7 @@ def _render_pnl_panel(row: dict, year: int, month: int):
         f'<div style="font-size:20px;font-weight:800;color:{pnl_col};font-feature-settings:\'tnum\' 1">'
         f'{sign} {fn(abs(pnl))}원</div>'
         f'<div style="font-size:13px;font-weight:600;color:{pnl_col}">'
-        f'이익률 {rate:.1f}% (매출÷지출)</div>'
+        f'이익률 {"+" if rate >= 0 else ""}{rate:.1f}% (손익÷총매출)</div>'
         f'</div></div>'
     )
 

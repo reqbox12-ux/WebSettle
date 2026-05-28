@@ -23,11 +23,12 @@ def render_kpi(df):
     cash_rev = (df["현금공급가액"].fillna(0) + df["현금VAT"].fillna(0)).sum()
     tot_exp  = df["총지출"].sum()
     tot_pnl  = df["손익"].sum()
-    # 이익률 = 총매출 ÷ 총지출 × 100  (100% 초과 = 흑자)
-    rate     = round(tot_rev / tot_exp * 100, 1) if tot_exp else 0
+    # 이익률 = 손익 ÷ 총매출 × 100
+    rate     = round(tot_pnl / tot_rev * 100, 1) if tot_rev else 0
     pc       = (df["손익"] > 0).sum()
     tc       = len(df[df["총매출"] > 0])
     sign_pnl = "▲" if tot_pnl >= 0 else "▼"
+    sign_rt  = "+" if rate >= 0 else ""
 
     cards = [
         ("카드 매출",  fw(card_rev), "원", "공급가액+VAT+수수료",           "c-ink"),
@@ -35,8 +36,8 @@ def render_kpi(df):
         ("총 지출",    fw(tot_exp),  "원", "인건비 + 기타 + 부가세 + 수수료", "c-red"),
         ("순 손익",    f"{sign_pnl} {fw(abs(tot_pnl))}", "원", "총매출 – 총지출",
          "c-pos" if tot_pnl >= 0 else "c-red"),
-        ("이익률",     f"{rate}", "%", f"매출÷지출 · 흑자 {pc} / {tc} 지점",
-         "c-pos" if rate >= 100 else "c-red"),
+        ("이익률",     f"{sign_rt}{rate}", "%", f"손익÷총매출 · 흑자 {pc} / {tc} 지점",
+         "c-pos" if rate >= 0 else "c-red"),
     ]
     html = '<div class="kpi-grid">'
     for lbl, val, unit, sub, cls in cards:
@@ -213,6 +214,7 @@ def render_page():
             sign = "▲" if pnl >= 0 else "▼"
             bdg_cls  = "bdg-pos" if pnl >= 0 else "bdg-neg"
             rate_col = "color:var(--pos)" if rt >= 0 else "color:var(--red)"
+            rate_sign = "+" if rt >= 0 else ""
             sel_cls  = "sel" if st.session_state.drill == row.branch else ""
             card_tot = int(row.get("카드공급가액", 0) + row.get("카드VAT", 0) + row.get("카드수수료", 0))
             cash_tot = int(row.get("현금공급가액", 0) + row.get("현금VAT", 0))
@@ -225,7 +227,7 @@ def render_page():
                 f'<td style="text-align:center">'
                 f'<span class="bdg {bdg_cls}">{sign} {fw(abs(pnl))}</span>'
                 f'&nbsp;<span style="font-size:11.5px;{rate_col}">'
-                f'{rt}%</span></td>'
+                f'{rate_sign}{rt}%</span></td>'
                 f'</tr>'
             )
         table_html += '</tbody></table></div>'

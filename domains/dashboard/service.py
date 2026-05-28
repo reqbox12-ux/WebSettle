@@ -144,9 +144,9 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
         + r["카드수수료"].fillna(0)
     )
     r["손익"]   = r["총매출"] - r["총지출"]
-    # ── 이익률 = 총매출 ÷ 총지출 × 100  (100% 초과 = 흑자)
+    # ── 이익률 = 손익 ÷ 총매출 × 100
     r["이익률"] = r.apply(
-        lambda x: round(x["총매출"] / x["총지출"] * 100, 1) if x["총지출"] > 0 else 0,
+        lambda x: round(x["손익"] / x["총매출"] * 100, 1) if x["총매출"] > 0 else 0,
         axis=1,
     )
     return r.reset_index()
