@@ -187,15 +187,6 @@ def _render_pnl_panel(row: dict, year: int, month: int):
             rev_html += _row("현금 VAT", cash_vat_v, indent=True)
         rev_html += _row("현금 소계", cash_total_v, bold=True)
 
-    # 수동입력 매출
-    bmr_total = int(row.get("수동입력매출", 0))
-    if bmr_total > 0:
-        for db_col, label in BMR_LABELS:
-            v = int(bmr_data.get(db_col, 0) or 0)
-            if v > 0:
-                rev_html += _row(label, v, indent=True)
-        rev_html += _row("직접입력 매출", bmr_total, bold=True)
-
     # 총매출 합계
     rev_html += (
         f'<div style="display:flex;justify-content:space-between;align-items:center;'
@@ -725,7 +716,7 @@ _REVENUE_COLS = {
 
 def _render_monthly_revenue(year: int, month: int):
     sec("월별 매출 직접 입력")
-    st.caption("카드/통장 데이터 외 별도로 관리할 매출 항목을 지점별로 입력하세요.")
+    st.caption("📌 이 탭의 입력값은 총매출 계산에 포함되지 않습니다. 통장 업로드 시 도급비·현금매출이 자동으로 집계됩니다. 참고용 기록 목적으로만 활용하세요.")
 
     col1, col2 = st.columns(2)
     yrs   = list(range(_now.year, _now.year - 3, -1))

@@ -111,16 +111,16 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
     r["카드실수령"]   = card_net   # 참고용 (공급가액 – 수수료)
     r["현금VAT"]     = cash_vat
     r["현금공급가액"] = cash_sup
-    r["수동입력매출"] = bmr_rev    # 월별 직접입력 매출 합계 (카페인건비 포함)
+    r["수동입력매출"] = bmr_rev    # 참고용 (총매출에 미포함 — 통장 현금공급가액과 중복)
 
-    # ── 총매출 = 카드공급가액 + 카드수수료 + 카드VAT + 현금공급가액 + 현금VAT + 수동입력
+    # ── 총매출 = 카드공급가액 + 카드수수료 + 카드VAT + 현금공급가액 + 현금VAT
+    #    ※ 수동입력매출은 통장 도급비·시설상환비와 동일 금액이므로 이중계산 방지를 위해 제외
     r["총매출"] = (
         r["카드공급가액"].fillna(0)
         + r["카드수수료"].fillna(0)
         + r["카드VAT"].fillna(0)
         + r["현금공급가액"].fillna(0)
         + r["현금VAT"].fillna(0)
-        + r["수동입력매출"].fillna(0)
     )
     r["부가세합계"] = r["카드VAT"].fillna(0) + r["현금VAT"].fillna(0)
     r["급여"]         = ins
