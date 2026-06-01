@@ -63,6 +63,85 @@ def render():
         # ── 4대보험 가입자 ──────────────────────────────────
         if insured_emps:
             sec(f"4대보험 가입자 ({len(insured_emps)}명)")
+
+            # ── 엑셀 일괄 업로드 ────────────────────────────
+            with st.expander("📤 엑셀로 일괄 입력 (이름 / 지점 / 세전금액)", expanded=False):
+                st.caption(
+                    "컬럼: **이름**, **지점**, **세전금액** 3개만 있으면 됩니다. "
+                    "이름+지점으로 직원 마스터와 자동 매칭 후 4대보험을 계산합니다. "
+                    "공단 고지내역이 등록된 직원은 실납부액이 자동 반영됩니다."
+                )
+                ins_file = st.file_uploader(
+                    "4대보험가입자_급여.xlsx", type=["xlsx", "xls"],
+                    key=f"ins_upload_{year}_{month}",
+                )
+                if ins_file:
+                    try:
+                        ins_upload_df = pd.read_excel(ins_file, dtype=str).fillna("")
+                        ins_upload_df.columns = [str(c).strip() for c in ins_upload_df.columns]
+
+                        name_col   = next((c for c in ins_upload_df.columns if "이름" in c or "성명" in c or "직원" in c), None)
+                        branch_col = next((c for c in ins_upload_df.columns if "지점" in c or "소속" in c or "부서" in c), None)
+                        pay_col    = next((c for c in ins_upload_df.columns if "금액" in c or "세전" in c or "기본급" in c or "급여" in c or "지급" in c), None)
+
+                        if not (name_col and branch_col and pay_col):
+                            st.error(f"필수 컬럼을 찾지 못했습니다. 현재 컬럼: {list(ins_upload_df.columns)}")
+                        else:
+                            emp_map = {(e["name"], e["branch"]): e for e in insured_emps}
+                            preview_rows = []
+                            for _, row in ins_upload_df.iterrows():
+                                name   = str(row[name_col]).strip()
+                                branch = str(row[branch_col]).strip()
+                                raw    = str(row[pay_col]).replace(",", "").strip()
+                                if not name or name == "nan":
+                                    continue
+                                try:
+                                    gross = int(float(raw)) if raw and raw != "nan" else 0
+                                except ValueError:
+                                    gross = 0
+                                emp    = emp_map.get((name, branch))
+                                status = "✅ 매칭" if emp else "⚠️ 직원 없음"
+                                preview_rows.append({
+                                    "상태": status, "이름": name, "지점": branch,
+                                    "세전금액": f"{gross:,}",
+                                    "_emp": emp, "_gross": gross,
+                                })
+
+                            if preview_rows:
+                                matched   = [r for r in preview_rows if r["_emp"]]
+                                unmatched = [r for r in preview_rows if not r["_emp"]]
+                                show_df = pd.DataFrame([
+                                    {k: v for k, v in r.items() if not k.startswith("_")}
+                                    for r in preview_rows
+                                ])
+                                st.dataframe(show_df, use_container_width=True, hide_index=True)
+                                st.caption(
+                                    f"총 {len(preview_rows)}행 — 매칭 {len(matched)}명 / 미매칭 {len(unmatched)}명"
+                                    + (f" (미매칭: {', '.join(r['이름']+'('+r['지점']+')' for r in unmatched)})" if unmatched else "")
+                                )
+                                if matched and st.button(
+                                    f"✅ 매칭된 {len(matched)}명 급여 저장 ({year}년 {month}월)",
+                                    type="primary", key="ins_bulk_save",
+                                ):
+                                    ok = 0
+                                    actual_applied = 0
+                                    for r in matched:
+                                        if r["_gross"] > 0:
+                                            entry  = calc_insured(r["_emp"], year, month, override_gross=r["_gross"])
+                                            actual = get_insurance_actual(year, month, r["_emp"]["id"])
+                                            if actual:
+                                                entry = apply_insurance_actuals(entry, actual)
+                                                actual_applied += 1
+                                            if save_payroll_entry(entry):
+                                                ok += 1
+                                    msg = f"✅ {ok}명 저장 완료"
+                                    if actual_applied:
+                                        msg += f" (공단 실납부액 적용 {actual_applied}명)"
+                                    st.success(msg)
+                                    st.rerun()
+                    except Exception as ex:
+                        st.error(f"파일 읽기 오류: {ex}")
+
             st.caption("기본급은 직원 마스터에서 자동 불러옵니다. 이번 달 변동이 있으면 수정하세요.")
             with st.form("insured_calc_form"):
                 overrides: dict = {}
