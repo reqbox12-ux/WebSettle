@@ -112,8 +112,10 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
             bmr_idx[c].fillna(0) if c in bmr_idx.columns else pd.Series(dtype=float)
             for c in _BMR_REVENUE_COLS
         )
+        bmr_vat = (bmr_rev / 11).apply(lambda v: int(v))   # 직접입력매출 VAT (÷11)
     else:
         bmr_rev = pd.Series(dtype=float)
+        bmr_vat = pd.Series(dtype=float)
 
     r = pd.DataFrame({"branch": BRANCH_LIST}).set_index("branch")
     r["카드공급가액"] = card_sup
@@ -123,6 +125,7 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
     r["현금VAT"]     = cash_vat
     r["현금공급가액"] = cash_sup
     r["수동입력매출"] = bmr_rev    # 직접 입력 현금매출 (도급비·시설상환비 등)
+    r["직접입력VAT"]  = bmr_vat    # 직접입력매출 VAT (수동입력매출 ÷ 11)
 
     # ── 총매출 = 카드공급가액 + 카드수수료 + 카드VAT + 현금공급가액 + 현금VAT + 수동입력매출
     #    ※ 통장의 도급비 항목은 계정과목 검토에서 '제외' 처리 후 업로드할 것
@@ -134,7 +137,12 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
         + r["현금VAT"].fillna(0)
         + r["수동입력매출"].fillna(0)
     )
-    r["부가세합계"] = r["카드VAT"].fillna(0) + r["현금VAT"].fillna(0)
+    # 부가세합계 = 카드VAT + 현금VAT + 직접입력매출VAT
+    r["부가세합계"] = (
+        r["카드VAT"].fillna(0)
+        + r["현금VAT"].fillna(0)
+        + r["직접입력VAT"].fillna(0)
+    )
     r["급여"]         = ins
     r["4대보험료_직원"] = ins4
     r["소득세지방세"]  = ins_t

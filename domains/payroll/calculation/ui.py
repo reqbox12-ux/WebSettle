@@ -287,7 +287,11 @@ def _render_input():
         st.session_state["xl_log"] = log
         total = sum(len(v) for v in parsed.values())
         if total > 0:
-            # 스테이징 업데이트
+            # 엑셀에 없는 직원은 명시적으로 0 설정 (기본급 그대로 남지 않도록)
+            stage["insured"]   = {e["id"]: 0 for e in insured_emps}
+            stage["freelance"] = {e["id"]: 0 for e in freelance_emps}
+            stage["business"]  = {e["id"]: 0 for e in business_emps}
+            # 엑셀 매칭 직원만 해당 금액으로 덮어씀
             stage["insured"].update(parsed["insured"])
             stage["freelance"].update(parsed["freelance"])
             stage["business"].update(parsed["business"])

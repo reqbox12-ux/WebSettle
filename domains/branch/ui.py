@@ -189,12 +189,15 @@ def _render_pnl_panel(row: dict, year: int, month: int):
 
     # 수동입력 현금매출 (도급비·시설상환비 등 직접 입력)
     bmr_total = int(row.get("수동입력매출", 0))
+    bmr_vat   = int(row.get("직접입력VAT", 0))
     if bmr_total > 0:
         for db_col, label in BMR_LABELS:
             v = int(bmr_data.get(db_col, 0) or 0)
             if v > 0:
                 rev_html += _row(label, v, indent=True)
-        rev_html += _row("직접입력 현금매출", bmr_total, bold=True)
+        if bmr_vat > 0:
+            rev_html += _row("직접입력매출 VAT (÷11)", bmr_vat, indent=True)
+        rev_html += _row("직접입력 현금매출 (VAT 포함)", bmr_total, bold=True)
 
     # 총매출 합계
     rev_html += (
@@ -227,8 +230,15 @@ def _render_pnl_panel(row: dict, year: int, month: int):
     if int(row.get("기타지출", 0)) > 0:
         exp_html += _row("기타지출 합계", row["기타지출"], bold=True)
 
+    # 부가세 세부 항목
+    if int(row.get("카드VAT", 0)) > 0:
+        exp_html += _row("카드 VAT", row["카드VAT"], indent=True)
+    if int(row.get("현금VAT", 0)) > 0:
+        exp_html += _row("현금 VAT", row["현금VAT"], indent=True)
+    if int(row.get("직접입력VAT", 0)) > 0:
+        exp_html += _row("직접입력매출 VAT", row["직접입력VAT"], indent=True)
     if int(row.get("부가세합계", 0)) > 0:
-        exp_html += _row("부가세합계 (카드VAT + 현금VAT)", row["부가세합계"], bold=True)
+        exp_html += _row("부가세합계 (카드VAT + 현금VAT + 직접입력VAT)", row["부가세합계"], bold=True)
     if int(row.get("카드수수료", 0)) > 0:
         exp_html += _row("카드수수료", row["카드수수료"], bold=True)
 
