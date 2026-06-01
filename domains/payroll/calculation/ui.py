@@ -74,7 +74,15 @@ def _match_amounts(emps: list, df: pd.DataFrame) -> dict:
     name_col   = _find_col(cols, ["이름", "성명", "직원", "상호"])
     branch_col = _find_col(cols, ["지점", "소속", "부서"])
     amount_col = _find_col(cols, ["금액", "세전", "기본급", "지급", "급여"])
-    if not (name_col and branch_col and amount_col):
+
+    if not name_col:
+        st.error(f"❌ 이름 컬럼 없음. 현재 컬럼: {cols}")
+        return {}
+    if not branch_col:
+        st.error(f"❌ 지점 컬럼 없음. 현재 컬럼: {cols}")
+        return {}
+    if not amount_col:
+        st.error(f"❌ 금액 컬럼 없음. 현재 컬럼: {cols}")
         return {}
 
     emp_map = {(e["name"], e["branch"]): e for e in emps}
@@ -82,7 +90,7 @@ def _match_amounts(emps: list, df: pd.DataFrame) -> dict:
     for _, row in df.iterrows():
         name   = str(row[name_col]).strip()
         branch = str(row[branch_col]).strip()
-        if not name or name == "nan":
+        if not name or name in ("nan", "이름", "성명"):
             continue
         amount = _to_int(row[amount_col])
         emp    = emp_map.get((name, branch))
@@ -93,10 +101,12 @@ def _match_amounts(emps: list, df: pd.DataFrame) -> dict:
 
 def _parse_payroll_excel(file, insured_emps, freelance_emps, business_emps) -> dict:
     """
-    급여 엑셀 파싱. 시트명 자동 인식:
-      4대보험: '4대보험', 'insured', '보험'
-      사업소득: '사업소득', 'freelance', '프리랜서'
-      사업자:  '사업자', 'business', '계산서'
+    급여 엑셀 파싱.
+    시트명 자동 인식 (키워드 포함 여부):
+      4대보험: '4대보험','insured','보험'
+      사업소득: '사업소득','freelance','프리랜서'
+      사업자:  '사업자','business','계산서'
+    ※ 시트가 1개뿐이면 → 4대보험 시트로 자동 처리
     반환: {"insured":{id:amt}, "freelance":{id:amt}, "business":{id:amt}}
     """
     try:
@@ -105,6 +115,9 @@ def _parse_payroll_excel(file, insured_emps, freelance_emps, business_emps) -> d
         st.error(f"엑셀 파일 읽기 실패: {e}")
         return {"insured": {}, "freelance": {}, "business": {}}
 
+    # ── 시트 목록 표시 (디버그) ────────────────────────────────
+    st.info(f"📋 파일 내 시트: **{' | '.join(xl.sheet_names)}**")
+
     def _pick_sheet(keywords: list):
         for kw in keywords:
             for sn in xl.sheet_names:
@@ -112,24 +125,40 @@ def _parse_payroll_excel(file, insured_emps, freelance_emps, business_emps) -> d
                     return sn
         return None
 
-    def _parse(sheet_name, emps):
+    def _parse(sheet_name, emps, label=""):
         if not sheet_name:
             return {}
         try:
             df = xl.parse(sheet_name, dtype=str).fillna("")
             df.columns = [str(c).strip() for c in df.columns]
-            return _match_amounts(emps, df)
-        except Exception:
+            # 컬럼 확인용 디버그
+            st.caption(f"[{label}] 시트='{sheet_name}' | 컬럼: {list(df.columns)}")
+            result = _match_amounts(emps, df)
+            # 미매칭 직원 표시
+            if emps:
+                matched_ids = set(result.keys())
+                unmatched = [e["name"] for e in emps if e["id"] not in matched_ids
+                             and int(e.get("base_salary", 0)) > 0]
+                if unmatched:
+                    st.caption(f"  └ 미매칭(직원마스터에 있으나 엑셀에 없음): {', '.join(unmatched[:10])}")
+            return result
+        except Exception as ex:
+            st.error(f"[{label}] 파싱 오류: {ex}")
             return {}
 
     ins_sheet = _pick_sheet(["4대보험", "insured", "보험"])
     frl_sheet = _pick_sheet(["사업소득", "freelance", "프리랜서"])
     biz_sheet = _pick_sheet(["사업자", "business", "계산서"])
 
+    # 시트가 1개뿐이고 아무것도 매칭 안 되면 → 4대보험으로 자동 처리
+    if not ins_sheet and not frl_sheet and not biz_sheet:
+        ins_sheet = xl.sheet_names[0]
+        st.warning(f"시트명 미감지 → '{ins_sheet}'을 4대보험 시트로 자동 처리합니다.")
+
     result = {
-        "insured":  _parse(ins_sheet,  insured_emps),
-        "freelance": _parse(frl_sheet, freelance_emps),
-        "business":  _parse(biz_sheet, business_emps),
+        "insured":   _parse(ins_sheet,  insured_emps,   "4대보험"),
+        "freelance": _parse(frl_sheet,  freelance_emps, "사업소득"),
+        "business":  _parse(biz_sheet,  business_emps,  "사업자"),
     }
 
     # 시트 인식 결과 안내
