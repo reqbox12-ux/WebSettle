@@ -44,12 +44,24 @@ def _get_stage(year: int, month: int) -> dict:
     return st.session_state[k]
 
 
-def _clear_widget_keys(emps: list, prefix: str, year: int, month: int):
-    """엑셀 재적용 시 기존 위젯 키를 지워 value= 파라미터가 반영되도록 함"""
-    for emp in emps:
-        k = f"{prefix}_{emp['id']}_{year}_{month}"
-        if k in st.session_state:
-            del st.session_state[k]
+def _ver_key(year: int, month: int) -> str:
+    """위젯 버전 키 — 엑셀 적용마다 증가 → 완전히 새 위젯 생성 강제"""
+    return f"pay_ver_{year}_{month}"
+
+
+def _get_ver(year: int, month: int) -> int:
+    return st.session_state.get(_ver_key(year, month), 0)
+
+
+def _bump_ver(year: int, month: int):
+    """버전을 올려서 다음 렌더에서 완전히 새 위젯이 만들어지게 함"""
+    st.session_state[_ver_key(year, month)] = _get_ver(year, month) + 1
+
+
+def _wkey(prefix: str, emp_id: int, year: int, month: int) -> str:
+    """버전 포함 위젯 키 — 버전이 바뀌면 Streamlit이 새 위젯으로 인식"""
+    ver = _get_ver(year, month)
+    return f"{prefix}_{emp_id}_{year}_{month}_v{ver}"
 
 
 # ── 엑셀 파싱 ─────────────────────────────────────────────────
@@ -272,17 +284,16 @@ def _render_input():
 
     if xl_file and apply_xl:
         parsed, log = _parse_payroll_excel(xl_file, insured_emps, freelance_emps, business_emps)
-        # 로그를 session_state에 저장 → 리런 후에도 표시 유지
         st.session_state["xl_log"] = log
         total = sum(len(v) for v in parsed.values())
         if total > 0:
-            _clear_widget_keys(insured_emps,   "ins", year, month)
-            _clear_widget_keys(freelance_emps, "frl", year, month)
-            _clear_widget_keys(business_emps,  "biz", year, month)
+            # 스테이징 업데이트
             stage["insured"].update(parsed["insured"])
             stage["freelance"].update(parsed["freelance"])
             stage["business"].update(parsed["business"])
             st.session_state[_stage_key(year, month)] = stage
+            # 버전 올림 → 완전히 새로운 위젯 키 생성 → value= 파라미터 반드시 반영
+            _bump_ver(year, month)
             parts = []
             if parsed["insured"]:   parts.append(f"4대보험 {len(parsed['insured'])}명")
             if parsed["freelance"]: parts.append(f"사업소득 {len(parsed['freelance'])}명")
@@ -332,7 +343,7 @@ def _render_input():
             c2.markdown(emp["branch"])
             c3.markdown(f"{int(emp.get('base_salary', 0)):,}")
             c4.number_input("", min_value=0, value=default, step=10000,
-                            key=f"ins_{emp['id']}_{year}_{month}",
+                            key=_wkey("ins", emp["id"], year, month),
                             label_visibility="collapsed")
             c5.markdown(str(emp.get("dependents", 1)))
 
@@ -351,7 +362,7 @@ def _render_input():
             c1.markdown(emp["name"])
             c2.markdown(emp["branch"])
             c3.number_input("", min_value=0, value=default, step=10000,
-                            key=f"frl_{emp['id']}_{year}_{month}",
+                            key=_wkey("frl", emp["id"], year, month),
                             label_visibility="collapsed")
 
     # ── 일반/면세사업자 입력 ──────────────────────────────────
@@ -370,7 +381,7 @@ def _render_input():
             c2.markdown(emp["branch"])
             c3.markdown("일반사업자" if emp["emp_type"] == "business" else "면세사업자")
             c4.number_input("", min_value=0, value=default, step=10000,
-                            key=f"biz_{emp['id']}_{year}_{month}",
+                            key=_wkey("biz", emp["id"], year, month),
                             label_visibility="collapsed")
 
     # ── 급여 확정 ─────────────────────────────────────────────
@@ -397,7 +408,7 @@ def _confirm_and_save(year, month, insured_emps, freelance_emps, business_emps):
 
     # 4대보험
     for emp in insured_emps:
-        gross = st.session_state.get(f"ins_{emp['id']}_{year}_{month}", 0)
+        gross = st.session_state.get(_wkey("ins", emp["id"], year, month), 0)
         if gross <= 0:
             continue
         try:
@@ -415,7 +426,7 @@ def _confirm_and_save(year, month, insured_emps, freelance_emps, business_emps):
 
     # 사업소득자
     for emp in freelance_emps:
-        gross = st.session_state.get(f"frl_{emp['id']}_{year}_{month}", 0)
+        gross = st.session_state.get(_wkey("frl", emp["id"], year, month), 0)
         if gross <= 0:
             continue
         try:
@@ -429,7 +440,7 @@ def _confirm_and_save(year, month, insured_emps, freelance_emps, business_emps):
 
     # 사업자
     for emp in business_emps:
-        gross = st.session_state.get(f"biz_{emp['id']}_{year}_{month}", 0)
+        gross = st.session_state.get(_wkey("biz", emp["id"], year, month), 0)
         if gross <= 0:
             continue
         try:
