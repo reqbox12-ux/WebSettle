@@ -9,10 +9,19 @@ services:
       - "8501:8501"   # ERP (Streamlit)
       - "8502:8502"   # 지점 포털 (FastAPI)
     volumes:
+      # ── 데이터/설정 (영구 유지) ───────────────────────────
       - ./data:/app/data
       - ./mapping:/app/mapping
-      - ./static:/app/static        # JS/CSS/이미지 변경 시 재빌드 불필요
-      - ./templates:/app/templates  # HTML 템플릿 변경 시 재빌드 불필요
+      - ./static:/app/static
+      - ./templates:/app/templates
+
+      # ── Python 코드 (git pull 후 restart만으로 즉시 반영) ─
+      - ./app.py:/app/app.py
+      - ./branch_server.py:/app/branch_server.py
+      - ./branch_app.py:/app/branch_app.py
+      - ./domains:/app/domains
+      - ./modules:/app/modules
+      - ./shared:/app/shared
     environment:
       - TZ=Asia/Seoul
     healthcheck:
