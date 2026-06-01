@@ -20,7 +20,7 @@ def render_kpi(df):
                 + df["카드VAT"].fillna(0)
                 + df["카드수수료"].fillna(0)).sum()
     # 현금 매출 = 공급가액 + VAT (총입금액)
-    cash_rev = (df["현금공급가액"].fillna(0) + df["현금VAT"].fillna(0)).sum()
+    cash_rev = (df["현금공급가액"].fillna(0) + df["현금VAT"].fillna(0) + df["수동입력매출"].fillna(0)).sum()
     tot_exp  = df["총지출"].sum()
     tot_pnl  = df["손익"].sum()
     # 이익률 = 손익 ÷ 총매출 × 100
@@ -32,7 +32,7 @@ def render_kpi(df):
 
     cards = [
         ("카드 매출",  fw(card_rev), "원", "공급가액+VAT+수수료",           "c-ink"),
-        ("현금 매출",  fw(cash_rev), "원", "공급가액+VAT (총입금)",          "c-ink"),
+        ("현금 매출",  fw(cash_rev), "원", "공급가액+VAT+직접입력 (총입금)", "c-ink"),
         ("총 지출",    fw(tot_exp),  "원", "인건비 + 기타 + 부가세 + 수수료", "c-red"),
         ("순 손익",    f"{sign_pnl} {fw(abs(tot_pnl))}", "원", "총매출 – 총지출",
          "c-pos" if tot_pnl >= 0 else "c-red"),
@@ -217,7 +217,7 @@ def render_page():
             rate_sign = "+" if rt >= 0 else ""
             sel_cls  = "sel" if st.session_state.drill == row.branch else ""
             card_tot = int(row.get("카드공급가액", 0) + row.get("카드VAT", 0) + row.get("카드수수료", 0))
-            cash_tot = int(row.get("현금공급가액", 0) + row.get("현금VAT", 0))
+            cash_tot = int(row.get("현금공급가액", 0) + row.get("현금VAT", 0) + row.get("수동입력매출", 0))
             table_html += (
                 f'<tr class="{sel_cls}">'
                 f'<td>{row.branch}</td>'

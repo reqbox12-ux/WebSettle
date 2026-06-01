@@ -42,8 +42,8 @@ def _delta_badge(curr: float, prev: float) -> str:
 def _render_mom_kpi(curr: dict, prev: dict):
     card_curr = curr.get("카드공급가액", 0) + curr.get("카드VAT", 0) + curr.get("카드수수료", 0)
     card_prev = prev.get("카드공급가액", 0) + prev.get("카드VAT", 0) + prev.get("카드수수료", 0)
-    cash_curr = curr.get("현금공급가액", 0) + curr.get("현금VAT", 0)
-    cash_prev = prev.get("현금공급가액", 0) + prev.get("현금VAT", 0)
+    cash_curr = curr.get("현금공급가액", 0) + curr.get("현금VAT", 0) + curr.get("수동입력매출", 0)
+    cash_prev = prev.get("현금공급가액", 0) + prev.get("현금VAT", 0) + prev.get("수동입력매출", 0)
     items = [
         ("총 매출",   curr["총매출"],  prev["총매출"],  "c-ink"),
         ("카드 매출", card_curr,       card_prev,       "c-ink"),

@@ -595,6 +595,28 @@ def delete_insurance_actuals(year: int, month: int) -> bool:
         return False
 
 
+def get_insurance_actuals_by_branch(year: int, month: int) -> list[dict]:
+    """공단 고지내역(insurance_actuals) → 지점별 직원/회사 부담 합계 집계"""
+    conn = get_conn()
+    try:
+        cur = conn.execute("""
+            SELECT e.branch,
+                   SUM(ia.pension_co + ia.health_co + ia.employ_co)   AS company_insurance,
+                   SUM(ia.pension_emp + ia.health_emp + ia.employ_emp) AS employee_insurance
+            FROM insurance_actuals ia
+            JOIN employees e ON ia.employee_id = e.id
+            WHERE ia.year=? AND ia.month=?
+            GROUP BY e.branch
+        """, (year, month))
+        cols = [d[0] for d in cur.description]
+        rows = cur.fetchall()
+        return [dict(zip(cols, r)) for r in rows]
+    except Exception:
+        return []
+    finally:
+        conn.close()
+
+
 # ── 이메일 로그 ──────────────────────────────────────────────
 # ── 직원 계정 (랜딩페이지 로그인) ────────────────────────────
 import hashlib as _hashlib

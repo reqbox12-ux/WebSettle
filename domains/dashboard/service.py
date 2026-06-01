@@ -9,6 +9,7 @@ from shared.db import (
 )
 from shared.config import BRANCH_LIST
 from domains.branch.db import get_branch_monthly_revenue
+from domains.payroll.db import get_insurance_actuals_by_branch
 
 # 월별 수동입력 매출 컬럼 (카페인건비 포함 — 아파트에서 받는 매출)
 _BMR_REVENUE_COLS = ["dogeub", "pt_sales", "gx_sales", "cafe_sales",
@@ -47,6 +48,15 @@ def c_ins(y, m):
 
 
 @st.cache_data(ttl=300, show_spinner=False)
+def c_ins_actual(y, m):
+    """공단 고지내역 기반 지점별 4대보험 집계 (insurance_actuals)"""
+    rows = get_insurance_actuals_by_branch(y, m)
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
 def c_bmr(y, m):
     """월별 수동입력 매출 (branch_monthly_revenue)"""
     rows = get_branch_monthly_revenue(y, m)
@@ -57,12 +67,12 @@ def c_bmr(y, m):
 
 def build_summary(year: int, month: int) -> pd.DataFrame:
     """모든 지점의 월별 매출/지출/손익 집계"""
-    card_df = c_card(year, month)
-    cash_df = c_cash(year, month)
-    pay_df  = c_pay(year, month)
-    exp_df  = c_exp(year, month)
-    ins_df  = c_ins(year, month)
-    bmr_df  = c_bmr(year, month)
+    card_df       = c_card(year, month)
+    cash_df       = c_cash(year, month)
+    pay_df        = c_pay(year, month)
+    exp_df        = c_exp(year, month)
+    ins_actual_df = c_ins_actual(year, month)
+    bmr_df        = c_bmr(year, month)
 
     def s(df, col):
         return df.set_index("branch")[col] if not df.empty else pd.Series(dtype=float)
@@ -76,16 +86,17 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
 
     if not pay_df.empty:
         ins   = pay_df[pay_df.type == "insured"].groupby("branch")["net_pay"].sum()
-        ins4  = pay_df[pay_df.type == "insured"].groupby("branch")["insurance"].sum()
         ins_t = pay_df[pay_df.type == "insured"].groupby("branch")["income_tax"].sum()
         frl   = pay_df[pay_df.type == "freelance"].groupby("branch")["net_pay"].sum()
         frl_t = pay_df[pay_df.type == "freelance"].groupby("branch")["income_tax"].sum()
         frl_l = pay_df[pay_df.type == "freelance"].groupby("branch")["local_tax"].sum()
     else:
-        ins = ins4 = ins_t = frl = frl_t = frl_l = pd.Series(dtype=float)
+        ins = ins_t = frl = frl_t = frl_l = pd.Series(dtype=float)
 
-    ins_co  = s(ins_df, "company_insurance")  if not ins_df.empty else pd.Series(dtype=float)
-    ins_emp = s(ins_df, "employee_insurance") if not ins_df.empty else pd.Series(dtype=float)
+    # 4대보험: 공단 고지내역(insurance_actuals) 기준 → 고지내역 저장 즉시 반영
+    ins_co  = s(ins_actual_df, "company_insurance")  if not ins_actual_df.empty else pd.Series(dtype=float)
+    ins_emp = s(ins_actual_df, "employee_insurance") if not ins_actual_df.empty else pd.Series(dtype=float)
+    ins4    = ins_emp  # 직원 부담 4대보험료 = 고지내역 기준
 
     pc = {"급여", "4대보험료", "소득세·지방세 합계", "프리랜서", "퇴직금"}
     other = (
