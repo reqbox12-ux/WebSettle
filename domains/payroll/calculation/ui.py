@@ -75,14 +75,7 @@ def _match_amounts(emps: list, df: pd.DataFrame) -> dict:
     branch_col = _find_col(cols, ["지점", "소속", "부서"])
     amount_col = _find_col(cols, ["금액", "세전", "기본급", "지급", "급여"])
 
-    if not name_col:
-        st.error(f"❌ 이름 컬럼 없음. 현재 컬럼: {cols}")
-        return {}
-    if not branch_col:
-        st.error(f"❌ 지점 컬럼 없음. 현재 컬럼: {cols}")
-        return {}
-    if not amount_col:
-        st.error(f"❌ 금액 컬럼 없음. 현재 컬럼: {cols}")
+    if not (name_col and branch_col and amount_col):
         return {}
 
     emp_map = {(e["name"], e["branch"]): e for e in emps}
@@ -99,79 +92,101 @@ def _match_amounts(emps: list, df: pd.DataFrame) -> dict:
     return result
 
 
-def _parse_payroll_excel(file, insured_emps, freelance_emps, business_emps) -> dict:
+def _parse_payroll_excel(file, insured_emps, freelance_emps, business_emps) -> tuple:
     """
-    급여 엑셀 파싱.
-    시트명 자동 인식 (키워드 포함 여부):
-      4대보험: '4대보험','insured','보험'
-      사업소득: '사업소득','freelance','프리랜서'
-      사업자:  '사업자','business','계산서'
-    ※ 시트가 1개뿐이면 → 4대보험 시트로 자동 처리
-    반환: {"insured":{id:amt}, "freelance":{id:amt}, "business":{id:amt}}
+    급여 엑셀 파싱. st.* 호출 없이 결과와 로그를 반환.
+    반환: (amounts_dict, log_dict)
+      amounts_dict = {"insured":{id:amt}, "freelance":{id:amt}, "business":{id:amt}}
+      log_dict     = {"sheets":[], "rows":[], "errors":[], "success":bool}
     """
+    log = {"sheets": [], "rows": [], "errors": [], "success": False}
+
     try:
         xl = pd.ExcelFile(file)
     except Exception as e:
-        st.error(f"엑셀 파일 읽기 실패: {e}")
-        return {"insured": {}, "freelance": {}, "business": {}}
+        log["errors"].append(f"❌ 엑셀 파일 읽기 실패: {e}")
+        return {"insured": {}, "freelance": {}, "business": {}}, log
 
-    # ── 시트 목록 표시 (디버그) ────────────────────────────────
-    st.info(f"📋 파일 내 시트: **{' | '.join(xl.sheet_names)}**")
+    log["sheets"] = xl.sheet_names
 
-    def _pick_sheet(keywords: list):
+    def _pick_sheet(keywords):
         for kw in keywords:
             for sn in xl.sheet_names:
                 if kw in str(sn):
                     return sn
         return None
 
-    def _parse(sheet_name, emps, label=""):
+    def _parse_sheet(sheet_name, emps, label):
         if not sheet_name:
             return {}
         try:
             df = xl.parse(sheet_name, dtype=str).fillna("")
             df.columns = [str(c).strip() for c in df.columns]
-            # 컬럼 확인용 디버그
-            st.caption(f"[{label}] 시트='{sheet_name}' | 컬럼: {list(df.columns)}")
+            cols = list(df.columns)
+
+            # 컬럼 감지
+            name_col   = _find_col(cols, ["이름", "성명", "직원", "상호"])
+            branch_col = _find_col(cols, ["지점", "소속", "부서"])
+            amount_col = _find_col(cols, ["금액", "세전", "기본급", "지급", "급여"])
+
+            if not name_col:
+                log["errors"].append(f"❌ [{label}] 이름 컬럼 없음 — 현재 컬럼: {cols}")
+                return {}
+            if not branch_col:
+                log["errors"].append(f"❌ [{label}] 지점 컬럼 없음 — 현재 컬럼: {cols}")
+                return {}
+            if not amount_col:
+                log["errors"].append(f"❌ [{label}] 금액 컬럼 없음 — 현재 컬럼: {cols}")
+                return {}
+
+            log["rows"].append(f"[{label}] 시트='{sheet_name}' | 컬럼 인식: 이름={name_col}, 지점={branch_col}, 금액={amount_col}")
+
             result = _match_amounts(emps, df)
-            # 미매칭 직원 표시
+
+            # 매칭 결과 로그
+            log["rows"].append(f"  └ 매칭 성공: {len(result)}명")
             if emps:
                 matched_ids = set(result.keys())
-                unmatched = [e["name"] for e in emps if e["id"] not in matched_ids
-                             and int(e.get("base_salary", 0)) > 0]
+                unmatched = [
+                    f"{e['name']}({e['branch']})"
+                    for e in emps
+                    if e["id"] not in matched_ids and int(e.get("base_salary", 0)) > 0
+                ]
                 if unmatched:
-                    st.caption(f"  └ 미매칭(직원마스터에 있으나 엑셀에 없음): {', '.join(unmatched[:10])}")
+                    log["rows"].append(f"  └ 미매칭(엑셀에 없는 직원): {', '.join(unmatched[:15])}")
+                # 엑셀에는 있으나 마스터에 없는 행
+                emp_map = {(e["name"], e["branch"]) for e in emps}
+                xl_only = []
+                for _, row in df.iterrows():
+                    n = str(row[name_col]).strip()
+                    b = str(row[branch_col]).strip()
+                    if n and n not in ("nan", "이름", "성명") and (n, b) not in emp_map:
+                        xl_only.append(f"{n}({b})")
+                if xl_only:
+                    log["rows"].append(f"  └ 엑셀에만 있음(직원마스터 미등록): {', '.join(xl_only[:10])}")
+
             return result
         except Exception as ex:
-            st.error(f"[{label}] 파싱 오류: {ex}")
+            log["errors"].append(f"❌ [{label}] 파싱 오류: {ex}")
             return {}
 
     ins_sheet = _pick_sheet(["4대보험", "insured", "보험"])
     frl_sheet = _pick_sheet(["사업소득", "freelance", "프리랜서"])
-    biz_sheet = _pick_sheet(["사업자", "business", "계산서"])
+    biz_sheet = _pick_sheet(["사업자",  "business", "계산서"])
 
-    # 시트가 1개뿐이고 아무것도 매칭 안 되면 → 4대보험으로 자동 처리
+    # 시트가 1개뿐이고 키워드 미매칭 → 첫 번째 시트를 4대보험으로
     if not ins_sheet and not frl_sheet and not biz_sheet:
         ins_sheet = xl.sheet_names[0]
-        st.warning(f"시트명 미감지 → '{ins_sheet}'을 4대보험 시트로 자동 처리합니다.")
+        log["rows"].append(f"⚠️ 시트명 키워드 미감지 → '{ins_sheet}'을 4대보험 시트로 자동 처리")
 
-    result = {
-        "insured":   _parse(ins_sheet,  insured_emps,   "4대보험"),
-        "freelance": _parse(frl_sheet,  freelance_emps, "사업소득"),
-        "business":  _parse(biz_sheet,  business_emps,  "사업자"),
+    amounts = {
+        "insured":   _parse_sheet(ins_sheet,  insured_emps,   "4대보험"),
+        "freelance": _parse_sheet(frl_sheet,  freelance_emps, "사업소득"),
+        "business":  _parse_sheet(biz_sheet,  business_emps,  "사업자"),
     }
-
-    # 시트 인식 결과 안내
-    sheet_info = []
-    if ins_sheet:  sheet_info.append(f"4대보험←{ins_sheet}")
-    if frl_sheet:  sheet_info.append(f"사업소득←{frl_sheet}")
-    if biz_sheet:  sheet_info.append(f"사업자←{biz_sheet}")
-    if not any([ins_sheet, frl_sheet, biz_sheet]):
-        st.error(f"인식된 시트 없음. 엑셀 시트명을 확인하세요. (현재: {xl.sheet_names})")
-    else:
-        st.caption(f"시트 인식: {' / '.join(sheet_info)}")
-
-    return result
+    total = sum(len(v) for v in amounts.values())
+    log["success"] = total > 0
+    return amounts, log
 
 
 # ── 메인 render ───────────────────────────────────────────────
@@ -256,10 +271,11 @@ def _render_input():
                                use_container_width=True, disabled=xl_file is None)
 
     if xl_file and apply_xl:
-        parsed = _parse_payroll_excel(xl_file, insured_emps, freelance_emps, business_emps)
-        total  = sum(len(v) for v in parsed.values())
+        parsed, log = _parse_payroll_excel(xl_file, insured_emps, freelance_emps, business_emps)
+        # 로그를 session_state에 저장 → 리런 후에도 표시 유지
+        st.session_state["xl_log"] = log
+        total = sum(len(v) for v in parsed.values())
         if total > 0:
-            # 기존 위젯 키 초기화 후 스테이징 업데이트 → 리런
             _clear_widget_keys(insured_emps,   "ins", year, month)
             _clear_widget_keys(freelance_emps, "frl", year, month)
             _clear_widget_keys(business_emps,  "biz", year, month)
@@ -271,10 +287,31 @@ def _render_input():
             if parsed["insured"]:   parts.append(f"4대보험 {len(parsed['insured'])}명")
             if parsed["freelance"]: parts.append(f"사업소득 {len(parsed['freelance'])}명")
             if parsed["business"]:  parts.append(f"사업자 {len(parsed['business'])}명")
-            st.success(f"✅ 엑셀 적용 완료 — {' / '.join(parts)}")
+            st.session_state["xl_log"]["success_msg"] = f"✅ 엑셀 적용 완료 — {' / '.join(parts)}"
             st.rerun()
-        else:
-            st.error("매칭된 직원이 없습니다. 시트명과 컬럼명(이름/지점/금액)을 확인하세요.")
+
+    # ── 엑셀 적용 결과 (session_state에서 영구 표시) ──────────
+    xl_log = st.session_state.get("xl_log")
+    if xl_log is not None:
+        with st.expander("📊 엑셀 적용 결과 (클릭하여 닫기)", expanded=True):
+            if xl_log.get("sheets"):
+                st.info(f"📋 파일 내 시트: **{' | '.join(xl_log['sheets'])}**")
+            if xl_log.get("success_msg"):
+                st.success(xl_log["success_msg"])
+            for row in xl_log.get("rows", []):
+                if row.startswith("⚠️"):
+                    st.warning(row)
+                elif row.startswith("  └"):
+                    st.caption(row)
+                else:
+                    st.markdown(f"`{row}`")
+            for err in xl_log.get("errors", []):
+                st.error(err)
+            if not xl_log.get("success") and not xl_log.get("errors"):
+                st.error("❌ 매칭된 직원이 없습니다. 시트명(4대보험/사업소득/사업자)과 컬럼명(이름/지점/금액)을 확인하세요.")
+            if st.button("✖ 결과 닫기", key="close_xl_log"):
+                del st.session_state["xl_log"]
+                st.rerun()
 
     st.divider()
 
