@@ -50,6 +50,57 @@ def _migrate_employees_add_columns(conn):
     conn.commit()
 
 
+def _migrate_payroll_entries_unique(conn):
+    """payroll_entries에 UNIQUE(year,month,employee_id) 제약이 없으면 테이블 재생성해 적용"""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='payroll_entries'"
+    ).fetchone()
+    if not row:
+        return
+    if "UNIQUE(year, month, employee_id)" in row[0]:
+        return  # 이미 적용됨
+    # 중복 제거(최신 id 유지) 후 테이블 재생성
+    conn.executescript("""
+        CREATE TABLE IF NOT EXISTS _pe_tmp AS
+            SELECT * FROM payroll_entries
+            WHERE id IN (
+                SELECT MAX(id) FROM payroll_entries
+                GROUP BY year, month, employee_id
+            );
+        DROP TABLE payroll_entries;
+        CREATE TABLE payroll_entries (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            year             INTEGER NOT NULL,
+            month            INTEGER NOT NULL,
+            employee_id      INTEGER NOT NULL,
+            branch           TEXT NOT NULL,
+            emp_type         TEXT NOT NULL,
+            gross_pay        INTEGER DEFAULT 0,
+            meal_allowance   INTEGER DEFAULT 0,
+            transport        INTEGER DEFAULT 0,
+            taxable_base     INTEGER DEFAULT 0,
+            income_tax       INTEGER DEFAULT 0,
+            local_tax        INTEGER DEFAULT 0,
+            pension_emp      INTEGER DEFAULT 0,
+            health_emp       INTEGER DEFAULT 0,
+            employ_emp       INTEGER DEFAULT 0,
+            total_deduction  INTEGER DEFAULT 0,
+            net_pay          INTEGER DEFAULT 0,
+            company_pension  INTEGER DEFAULT 0,
+            company_health   INTEGER DEFAULT 0,
+            company_employ   INTEGER DEFAULT 0,
+            company_accident INTEGER DEFAULT 0,
+            status           TEXT DEFAULT 'draft',
+            note             TEXT DEFAULT '',
+            created_at       TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(year, month, employee_id)
+        );
+        INSERT INTO payroll_entries SELECT * FROM _pe_tmp;
+        DROP TABLE _pe_tmp;
+    """)
+    conn.commit()
+
+
 def init_payroll_tables():
     """급여 시스템 전용 테이블 생성"""
     conn = get_conn()
@@ -204,6 +255,7 @@ def init_payroll_tables():
     conn.commit()
     _migrate_employees_emp_type(conn)
     _migrate_employees_add_columns(conn)
+    _migrate_payroll_entries_unique(conn)
 
     # 기본 4대보험 요율 (2025년)
     exists = conn.execute("SELECT id FROM insurance_rates WHERE year=2025").fetchone()
@@ -388,6 +440,25 @@ def get_payroll_entries(year: int, month: int, branch: str = None) -> list[dict]
     rows = cur.fetchall()
     conn.close()
     return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_payroll_entries(year: int, month: int, branch: str = None) -> int:
+    """급여 데이터 삭제. branch=None 이면 해당 연월 전체 삭제. 반환: 삭제 건수"""
+    conn = get_conn()
+    if branch:
+        cur = conn.execute(
+            "DELETE FROM payroll_entries WHERE year=? AND month=? AND branch=?",
+            (year, month, branch),
+        )
+    else:
+        cur = conn.execute(
+            "DELETE FROM payroll_entries WHERE year=? AND month=?",
+            (year, month),
+        )
+    count = cur.rowcount
+    conn.commit()
+    conn.close()
+    return count
 
 
 def save_payroll_entry(entry: dict) -> bool:
