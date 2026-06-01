@@ -39,11 +39,11 @@ def render():
     # ── 직원 목록 ────────────────────────────────────────────
     with tab_list:
         # 중복 직원 정리 --------------------------------------
-        with st.expander("🧹 중복 직원 정리 (이름 + 지점 기준)", expanded=False):
+        with st.expander("🧹 중복 직원 정리 (이름 + 지점 + 유형 기준)", expanded=False):
             st.caption(
-                "이름과 소속지점이 동일한 중복 직원을 자동으로 정리합니다. "
-                "가장 먼저 등록된 행(최소 ID)을 대표로 남기고 나머지를 삭제합니다. "
-                "연결된 급여 내역은 대표 ID로 자동 재연결됩니다."
+                "**이름 · 소속지점 · 고용유형** 3가지가 모두 동일한 경우에만 중복으로 처리합니다. "
+                "같은 이름이라도 유형이 다르면(예: 4대보험 기본급 + 사업소득 인센티브) 중복이 아닙니다. "
+                "가장 먼저 등록된 행(최소 ID)을 대표로 남기고, 연결된 급여 내역은 자동 재연결됩니다."
             )
             if st.button("🧹 지금 중복 정리 실행", key="dedup_btn", type="primary"):
                 result = deduplicate_employees()
@@ -54,9 +54,16 @@ def render():
                         f"✅ 정리 완료 — {result['groups']}개 그룹에서 "
                         f"중복 {result['deleted']}명 삭제"
                     )
+                    EMP_TYPE_SHORT_LOCAL = {
+                        "insured": "4대보험", "freelance": "사업소득자",
+                        "business": "일반사업자", "tax_exempt": "면세사업자",
+                    }
                     rows = [
-                        {"이름": d["name"], "지점": d["branch"],
-                         "유지 ID": d["kept_id"], "삭제 수": d["removed"]}
+                        {
+                            "이름": d["name"], "지점": d["branch"],
+                            "유형": EMP_TYPE_SHORT_LOCAL.get(d.get("emp_type", ""), d.get("emp_type", "")),
+                            "유지 ID": d["kept_id"], "삭제 수": d["removed"],
+                        }
                         for d in result["detail"]
                     ]
                     st.dataframe(rows, use_container_width=True, hide_index=True)

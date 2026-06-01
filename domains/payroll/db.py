@@ -277,9 +277,11 @@ def upsert_employee(data: dict) -> int:
         """, (*params_vals, data["id"]))
         emp_id = int(data["id"])
     else:
+        # 이름 + 지점 + 유형 3가지가 모두 같을 때만 기존 행 업데이트
+        # → 같은 사람이 4대보험(기본급) + 사업소득(인센티브)로 중복 등록 가능
         existing = conn.execute(
-            "SELECT id FROM employees WHERE name=? AND branch=? ORDER BY id LIMIT 1",
-            (name, branch),
+            "SELECT id FROM employees WHERE name=? AND branch=? AND emp_type=? ORDER BY id LIMIT 1",
+            (name, branch, data["emp_type"]),
         ).fetchone()
 
         if existing:
@@ -319,21 +321,22 @@ def deduplicate_employees() -> dict:
     groups  = 0
     detail  = []
 
-    # (name, branch) 기준 2개 이상인 그룹 탐색
+    # (name, branch, emp_type) 3개 모두 동일한 그룹만 중복으로 처리
+    # → 같은 이름+지점이라도 유형(4대보험/사업소득)이 다르면 중복 아님
     dup_rows = conn.execute("""
-        SELECT name, branch, COUNT(*) as cnt, MIN(id) as keep_id
+        SELECT name, branch, emp_type, COUNT(*) as cnt, MIN(id) as keep_id
         FROM employees
-        GROUP BY name, branch
+        GROUP BY name, branch, emp_type
         HAVING cnt > 1
     """).fetchall()
 
-    for name, branch, cnt, keep_id in dup_rows:
+    for name, branch, emp_type, cnt, keep_id in dup_rows:
         groups += 1
         # 대표 ID(keep_id) 제외한 나머지 ID 목록
         dup_ids = [
             r[0] for r in conn.execute(
-                "SELECT id FROM employees WHERE name=? AND branch=? AND id!=? ORDER BY id",
-                (name, branch, keep_id),
+                "SELECT id FROM employees WHERE name=? AND branch=? AND emp_type=? AND id!=? ORDER BY id",
+                (name, branch, emp_type, keep_id),
             ).fetchall()
         ]
         for dup_id in dup_ids:
@@ -347,7 +350,7 @@ def deduplicate_employees() -> dict:
             conn.execute("DELETE FROM payroll_entries WHERE employee_id=?", (dup_id,))
             conn.execute("DELETE FROM employees WHERE id=?", (dup_id,))
             deleted += 1
-        detail.append({"name": name, "branch": branch, "kept_id": keep_id, "removed": len(dup_ids)})
+        detail.append({"name": name, "branch": branch, "emp_type": emp_type, "kept_id": keep_id, "removed": len(dup_ids)})
 
     conn.commit()
     conn.close()
