@@ -64,6 +64,14 @@ def _wkey(prefix: str, emp_id: int, year: int, month: int) -> str:
     return f"{prefix}_{emp_id}_{year}_{month}_v{ver}"
 
 
+def _clear_widget_keys(emps: list, prefix: str, year: int, month: int):
+    """해당 직원 목록의 위젯 세션 상태 키를 모두 제거"""
+    for emp in emps:
+        key = _wkey(prefix, emp["id"], year, month)
+        if key in st.session_state:
+            del st.session_state[key]
+
+
 # ── 엑셀 파싱 ─────────────────────────────────────────────────
 def _find_col(columns: list, keywords: list):
     for kw in keywords:
