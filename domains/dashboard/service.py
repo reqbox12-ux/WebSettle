@@ -87,7 +87,8 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
     if not pay_df.empty:
         ins   = pay_df[pay_df.type == "insured"].groupby("branch")["net_pay"].sum()
         ins_t = pay_df[pay_df.type == "insured"].groupby("branch")["income_tax"].sum()
-        frl   = pay_df[pay_df.type == "freelance"].groupby("branch")["net_pay"].sum()
+        _ext  = pay_df.type.isin(["freelance", "business", "tax_exempt"])
+        frl   = pay_df[_ext].groupby("branch")["net_pay"].sum()
         frl_t = pay_df[pay_df.type == "freelance"].groupby("branch")["income_tax"].sum()
         frl_l = pay_df[pay_df.type == "freelance"].groupby("branch")["local_tax"].sum()
     else:
