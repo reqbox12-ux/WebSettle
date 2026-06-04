@@ -383,24 +383,30 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
     return R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1 - a))
 
 
-def _gps_check(branch: str, user_lat: float | None, user_lng: float | None):
-    """GPS 위치 검증. 실패 시 HTTPException 발생. 지점 좌표 없으면 통과."""
+def _gps_check(branch: str, user_lat: float | None, user_lng: float | None) -> str:
+    """
+    GPS 위치 검증. 반환값: 'ok' | 'skipped' | HTTPException 발생(범위 이탈)
+    - 지점 좌표 미등록 → 'skipped' (체크 불필요)
+    - 클라이언트 GPS 취득 실패(HTTP LAN, PC 등) → 'skipped' (경고만, 차단 안 함)
+    - 범위 이탈 → HTTPException 400
+    """
     conn = get_conn()
     row  = conn.execute(
         "SELECT lat, lng, attendance_radius FROM branches WHERE name=?", (branch,)
     ).fetchone()
     conn.close()
     if not row or not row[0] or not row[1]:
-        return  # 지점 좌표 미등록 → GPS 체크 생략
+        return "skipped"  # 지점 좌표 미등록
     b_lat, b_lng, radius = float(row[0]), float(row[1]), int(row[2] or 300)
     if user_lat is None or user_lng is None:
-        raise HTTPException(status_code=400, detail="GPS 좌표가 필요합니다. 위치 권한을 허용해주세요.")
+        return "skipped"  # GPS 취득 불가 (HTTP LAN / PC / 타임아웃) → 경고만, 차단 안 함
     dist = _haversine_m(b_lat, b_lng, user_lat, user_lng)
     if dist > radius:
         raise HTTPException(
             status_code=400,
             detail=f"현재 위치가 지점에서 {dist:.0f}m 떨어져 있습니다. (허용 {radius}m 이내)"
         )
+    return "ok"
 
 
 class ClockBody(BaseModel):
@@ -415,11 +421,11 @@ async def api_clock_in(request: Request, body: ClockBody):
     emp_id = int(user["sub"])
     today  = datetime.now().strftime("%Y-%m-%d")
     now_t  = body.time or datetime.now().strftime("%H:%M")
-    _gps_check(user.get("branch", ""), body.lat, body.lng)
+    gps_st = _gps_check(user.get("branch", ""), body.lat, body.lng)
     ok, msg = attendance_clock_in(emp_id, today, now_t)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
-    return {"ok": True, "time": now_t}
+    return {"ok": True, "time": now_t, "gps": gps_st}
 
 
 @app.post("/api/attendance/clock-out")
@@ -428,7 +434,7 @@ async def api_clock_out(request: Request, body: ClockBody):
     emp_id = int(user["sub"])
     today  = datetime.now().strftime("%Y-%m-%d")
     now_t  = body.time or datetime.now().strftime("%H:%M")
-    _gps_check(user.get("branch", ""), body.lat, body.lng)
+    gps_st = _gps_check(user.get("branch", ""), body.lat, body.lng)
     conn = get_conn()
     emp_row = conn.execute(
         "SELECT work_start FROM employees WHERE id=?", (emp_id,)
@@ -438,12 +444,11 @@ async def api_clock_out(request: Request, body: ClockBody):
     ok, msg = attendance_clock_out(emp_id, today, now_t, work_start)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
-    # 시급제 급여 자동 계산
     try:
         calc_and_save_daily_pay(emp_id, today)
     except Exception:
         pass
-    return {"ok": True, "time": now_t}
+    return {"ok": True, "time": now_t, "gps": gps_st}
 
 
 @app.post("/api/attendance/break-start")

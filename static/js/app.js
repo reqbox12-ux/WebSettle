@@ -536,29 +536,33 @@
     const gps  = await getGps();
     const time = new Date().toTimeString().slice(0, 5);
     const body = { time, lat: gps?.lat ?? null, lng: gps?.lng ?? null };
+    // GPS 취득 실패 시 경고 (차단 안 함 — HTTP LAN 환경에서는 브라우저가 GPS를 허용하지 않음)
+    if (!gps) {
+      showToast('⚠️ GPS 미확인 — 위치 검증 없이 처리됩니다', 'warn');
+    }
     const resp = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
     return { resp, time };
   }
 
-  window.clockIn     = async function () {
+  window.clockIn    = async function () {
     const { resp, time } = await _doAttendance('/api/attendance/clock-in');
-    if (resp && resp.ok) { showToast('✅ 출근 — ' + time); navigateTo('attendance'); }
-    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+    if (resp && resp.ok) { showToast('✅ 출근 완료 — ' + time); navigateTo('attendance'); }
+    else { const d = await resp?.json().catch(() => ({})); showToast(d?.detail || '처리 실패', 'err'); }
   };
-  window.clockOut    = async function () {
+  window.clockOut   = async function () {
     const { resp, time } = await _doAttendance('/api/attendance/clock-out');
-    if (resp && resp.ok) { showToast('✅ 퇴근 — ' + time); navigateTo('attendance'); }
-    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+    if (resp && resp.ok) { showToast('✅ 퇴근 완료 — ' + time); navigateTo('attendance'); }
+    else { const d = await resp?.json().catch(() => ({})); showToast(d?.detail || '처리 실패', 'err'); }
   };
-  window.breakStart  = async function () {
+  window.breakStart = async function () {
     const { resp, time } = await _doAttendance('/api/attendance/break-start');
     if (resp && resp.ok) { showToast('☕ 휴게 시작 — ' + time); navigateTo('attendance'); }
-    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+    else { const d = await resp?.json().catch(() => ({})); showToast(d?.detail || '처리 실패', 'err'); }
   };
-  window.breakEnd    = async function () {
+  window.breakEnd   = async function () {
     const { resp, time } = await _doAttendance('/api/attendance/break-end');
     if (resp && resp.ok) { showToast('▶ 휴게 종료 — ' + time); navigateTo('attendance'); }
-    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+    else { const d = await resp?.json().catch(() => ({})); showToast(d?.detail || '처리 실패', 'err'); }
   };
 
   // ── Operations ────────────────────────────────────────────────
