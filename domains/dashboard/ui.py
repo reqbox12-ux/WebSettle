@@ -155,15 +155,15 @@ def render_donut_chart(df, key="donut"):
         textfont=_tf,
         hovertemplate="%{label}: %{value:,.0f}원 (%{percent})<extra></extra>",
     ))
-    fig.update_layout(
-        **PLOT_BASE, height=310, showlegend=False,
-        margin=dict(t=10, b=10, l=10, r=10),
-        annotations=[dict(
+    fig.update_layout(**{
+        **PLOT_BASE, "height": 310, "showlegend": False,
+        "margin": dict(t=10, b=10, l=10, r=10),
+        "annotations": [dict(
             text=f"<b>{fw(int(total))}</b><br>총지출",
             x=0.5, y=0.5, showarrow=False,
             font=dict(size=12, family="Pretendard Variable,sans-serif", color="#1F1B1B"),
         )],
-    )
+    })
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
@@ -203,15 +203,15 @@ def render_trend_chart(year, month, sel_branches, key="trend"):
         ),
         hovertemplate="%{x}: %{y:,.0f}원<extra>손익</extra>",
     ))
-    fig.update_layout(
-        **PLOT_BASE, height=310,
-        yaxis=dict(tickformat=",", gridcolor="rgba(31,27,27,.08)", zeroline=True,
-                   zerolinecolor="rgba(31,27,27,.2)", tickfont=_tf, color="#1F1B1B"),
-        xaxis=dict(tickfont=_tf, color="#1F1B1B"),
-        margin=dict(t=16, b=40, l=10, r=10),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
-                    font=dict(size=11, family="Pretendard Variable,sans-serif")),
-    )
+    fig.update_layout(**{
+        **PLOT_BASE, "height": 310,
+        "yaxis": dict(tickformat=",", gridcolor="rgba(31,27,27,.08)", zeroline=True,
+                      zerolinecolor="rgba(31,27,27,.2)", tickfont=_tf, color="#1F1B1B"),
+        "xaxis": dict(tickfont=_tf, color="#1F1B1B"),
+        "margin": dict(t=16, b=40, l=10, r=10),
+        "legend": dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
+                       font=dict(size=11, family="Pretendard Variable,sans-serif")),
+    })
     st.plotly_chart(fig, use_container_width=True, key=key)
 
 
