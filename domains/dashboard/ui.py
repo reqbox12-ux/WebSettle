@@ -146,12 +146,13 @@ def render_donut_chart(df, key="donut"):
         return
     labels = ["인건비", "기타지출", "부가세", "카드수수료"]
     values = [labor, other, vat, fee]
-    colors = ["#3D3835", "#C8A87E", "#E8C96B", "#E60028"]
-    _tf = dict(size=11, color="#1F1B1B", family="Pretendard Variable,sans-serif")
+    colors = ["#4A6FA5", "#C8A87E", "#E8C96B", "#E60028"]
+    _tf = dict(size=11.5, color="#1F1B1B", family="Pretendard Variable,sans-serif")
     fig = go.Figure(go.Pie(
         labels=labels, values=values, hole=0.55,
-        marker=dict(colors=colors, line=dict(color="white", width=2)),
+        marker=dict(colors=colors, line=dict(color="white", width=2.5)),
         textinfo="label+percent",
+        textposition="outside",
         textfont=_tf,
         hovertemplate="%{label}: %{value:,.0f}원 (%{percent})<extra></extra>",
     ))
