@@ -285,6 +285,14 @@ def render_page():
         sel_branches = BRANCH_LIST[:]
     else:
         prev_sel = st.session_state.get("_sel_br_cache", BRANCH_LIST[:])
+        # 전체 선택 / 전체 해제 버튼
+        _bc1, _bc2, _ = st.columns([1, 1, 6])
+        if _bc1.button("✅ 전체 선택", key="br_sel_all", use_container_width=True):
+            st.session_state["_sel_br_cache"] = BRANCH_LIST[:]
+            st.rerun()
+        if _bc2.button("⬜ 전체 해제", key="br_desel_all", use_container_width=True):
+            st.session_state["_sel_br_cache"] = []
+            st.rerun()
         n_col    = 5
         n_rows_g = (len(BRANCH_LIST) + n_col - 1) // n_col
         grid     = [st.columns(n_col) for _ in range(n_rows_g)]
@@ -294,11 +302,16 @@ def render_page():
             if col.checkbox(br, value=(br in prev_sel), key=f"f_br_{br}")
         ]
         if not sel_branches:
-            sel_branches = BRANCH_LIST[:]
+            st.caption("⚠️ 지점을 하나 이상 선택하세요.")
     st.session_state["_sel_br_cache"] = sel_branches
     # 하위 호환 (branch/ui.py 등에서 sel_br 참조)
     st.session_state.sel_br = sel_branches[0] if len(sel_branches) == 1 else "전체"
     st.markdown('</div>', unsafe_allow_html=True)
+
+    if not sel_branches:
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.info("📌 지점을 하나 이상 선택하세요.")
+        return
 
     # ── 데이터 로드 ───────────────────────────────────────────
     with st.spinner("데이터 로드 중..."):

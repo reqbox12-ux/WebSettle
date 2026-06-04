@@ -2,6 +2,7 @@
 domains/upload/ui.py — 데이터 업로드 페이지
 """
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -17,12 +18,88 @@ from shared.db import (
 from shared.utils import sec
 from modules.parser import (
     parse_card_aggregate, parse_credit_card,
-    parse_bank_auto, recalc_vat,
+    parse_hana, parse_shinhan, recalc_vat,
 )
 from modules.classifier import classify_transactions
 from modules.ai_classifier import ai_classify_batch, load_api_key
 
-_now = datetime.now()
+_now        = datetime.now()
+_DB_PATH    = Path(__file__).parent.parent.parent / "data" / "settlement.db"
+_BACKUP_DIR = Path(__file__).parent.parent.parent / "backups"
+
+
+# ── 은행 데이터 처리 공통 ─────────────────────────────────────
+def _process_and_save(df: pd.DataFrame, bank: str, year: int, month: int,
+                      api_key, bank_label: str):
+    """분류 → AI → VAT 재계산 → 저장"""
+    if df.empty:
+        st.warning(f"⚠️ {bank_label} 시트를 찾지 못했습니다.")
+        return
+
+    df = classify_transactions(df, bank)
+    if api_key:
+        unclf = df[df["needs_review"] == 1]
+        if not unclf.empty:
+            tx_list = unclf[["description", "counterpart", "deposit", "withdrawal"]].to_dict("records")
+            ai_res  = ai_classify_batch(tx_list, BRANCH_LIST, ALL_CATEGORIES, api_key)
+            for item in ai_res:
+                try:
+                    idx  = unclf.index[item["id"]]
+                    br   = item.get("branch", "")
+                    cat  = item.get("category", "")
+                    conf = float(item.get("confidence", 0))
+                    if br or cat:
+                        df.at[idx, "branch"]   = br
+                        df.at[idx, "category"] = cat
+                        df.at[idx, "classification_source"] = "ai"
+                        df.at[idx, "is_excluded"] = 1 if cat == "제외" else 0
+                        if conf >= 0.75 and br and cat:
+                            df.at[idx, "needs_review"] = 0
+                except Exception:
+                    pass
+
+    df = recalc_vat(df)
+    upsert_bank_transactions(df, bank, year, month)
+    total    = len(df)
+    auto_ok  = int((df.needs_review == 0).sum())
+    need_rev = int(df.needs_review.sum())
+    ai_cnt   = int((df.get("classification_source", "") == "ai").sum()) \
+               if "classification_source" in df.columns else 0
+    st.success(
+        f"✅ {bank_label}: 총 {total}건 저장 "
+        f"(자동분류 {auto_ok}건 / AI {ai_cnt}건 / 미분류 {need_rev}건)"
+    )
+    if need_rev > 0:
+        st.info(f"📋 미분류 {need_rev}건은 '규칙 관리 → 계정과목 검토'에서 확인하세요.")
+    st.cache_data.clear()
+
+
+def _sheet_preview(fb):
+    """업로드 파일 시트 구조 미리보기"""
+    xl = pd.ExcelFile(fb)
+    with st.expander(f"📋 파일 구조 확인 ({len(xl.sheet_names)}개 시트)", expanded=True):
+        for sn in xl.sheet_names:
+            try:
+                raw  = xl.parse(sn, header=None, nrows=4, dtype=str)
+                hrow = 0
+                for ri, row in raw.iterrows():
+                    vals = [str(v).strip() for v in row
+                            if pd.notna(v) and str(v).strip() not in ("nan", "")]
+                    if "No" in vals:
+                        hrow = ri
+                        break
+                headers = [str(v).strip() for v in raw.iloc[hrow]
+                           if pd.notna(v) and str(v).strip() not in ("nan", "")]
+                if any("전체선택" in v for v in headers):
+                    kind = "🟦 신한통장"
+                elif any("의뢰인" in v or "수취인" in v for v in headers):
+                    kind = "🟩 하나통장"
+                else:
+                    kind = "❓ 미감지"
+                st.markdown(f"**{sn}** → {kind}")
+                st.caption("헤더: " + " | ".join(headers[:10]))
+            except Exception as e:
+                st.caption(f"{sn}: 읽기 실패 ({e})")
 
 
 def render_page():
@@ -38,9 +115,9 @@ def render_page():
     )
 
     _api_key = load_api_key()
-    tab1, tab2 = st.tabs(["카드 매출", "통장 내역"])
+    tab1, tab2, tab3 = st.tabs(["카드 매출", "통장 내역", "🗄️ 백업/복원"])
 
-    # ── 카드 매출 ─────────────────────────────────────────
+    # ── 카드 매출 ─────────────────────────────────────────────
     with tab1:
         st.subheader("카드 매출 업로드")
         c1, c2 = st.columns(2)
@@ -85,7 +162,6 @@ def render_page():
                 finally:
                     os.unlink(tp)
 
-        # ── 카드 데이터 클리어 ──────────────────────────
         st.divider()
         st.caption("⚠️ 해당 월 카드매출 전체 삭제 (재업로드 또는 초기화 시 사용)")
         cd1, cd2, cd3 = st.columns([1, 1, 2])
@@ -100,97 +176,53 @@ def render_page():
             st.success(f"✅ {cl_card_y}년 {cl_card_m}월 카드매출 데이터 삭제 완료")
             st.rerun()
 
-    # ── 통장 내역 ─────────────────────────────────────────
+    # ── 통장 내역 ─────────────────────────────────────────────
     with tab2:
         st.subheader("통장 내역 업로드")
         c1, c2 = st.columns(2)
         by = c1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="by")
         bm = c2.selectbox("월", list(range(1, 13)), index=_now.month - 1, key="bm",
                           format_func=lambda m: f"{m}월")
-        st.caption("💡 하나통장(여러 시트)과 신한통장이 합쳐진 파일을 그대로 업로드하세요.")
-        fb = st.file_uploader("통장내역.xlsx", type=["xlsx"], key="bank")
 
-        if fb:
-            _xl_check = pd.ExcelFile(fb)
-            with st.expander(f"📋 파일 구조 확인 ({len(_xl_check.sheet_names)}개 시트)", expanded=True):
-                for _sn in _xl_check.sheet_names:
-                    try:
-                        _raw   = _xl_check.parse(_sn, header=None, nrows=4, dtype=str)
-                        _hrow  = 0
-                        for _ri, _row in _raw.iterrows():
-                            _vals = [str(v).strip() for v in _row
-                                     if pd.notna(v) and str(v).strip() not in ("nan", "")]
-                            if "No" in _vals:
-                                _hrow = _ri
-                                break
-                        _headers = [str(v).strip() for v in _raw.iloc[_hrow]
-                                    if pd.notna(v) and str(v).strip() not in ("nan", "")]
-                        if any("전체선택" in v for v in _headers):
-                            _kind = "🟦 신한통장"
-                        elif any("의뢰인" in v or "수취인" in v for v in _headers):
-                            _kind = "🟩 하나통장"
-                        else:
-                            _kind = "❓ 미감지"
-                        st.markdown(f"**{_sn}** → {_kind}")
-                        st.caption("헤더: " + " | ".join(_headers[:10]))
-                    except Exception as _e:
-                        st.caption(f"{_sn}: 읽기 실패 ({_e})")
+        # ── 하나은행 ─────────────────────────────────────────
+        sec("🟩 하나은행 통장")
+        st.caption("하나은행 파일만 업로드 → 하나 데이터만 교체됩니다. 신한은행은 영향 없음.")
+        f_hana = st.file_uploader("하나통장.xlsx", type=["xlsx"], key="bank_hana")
 
-        if fb and st.button("저장", type="primary", key="b_bank"):
-            with st.spinner("시트 자동 감지 및 분류 중..."):
-                xl        = pd.ExcelFile(fb)
-                bank_data = parse_bank_auto(xl, by, bm)
-                saved     = False
-                bank_names = {"hana": "하나통장", "shinhan": "신한통장"}
-                for bank, df in bank_data.items():
-                    if df.empty:
-                        continue
-                    try:
-                        df = classify_transactions(df, bank)
-                        if _api_key:
-                            unclf = df[df["needs_review"] == 1]
-                            if not unclf.empty:
-                                tx_list = unclf[["description", "counterpart", "deposit", "withdrawal"]].to_dict("records")
-                                ai_res  = ai_classify_batch(tx_list, BRANCH_LIST, ALL_CATEGORIES, _api_key)
-                                for item in ai_res:
-                                    try:
-                                        loc_idx = unclf.index[item["id"]]
-                                        br   = item.get("branch", "")
-                                        cat  = item.get("category", "")
-                                        conf = float(item.get("confidence", 0))
-                                        if br or cat:
-                                            df.at[loc_idx, "branch"]   = br
-                                            df.at[loc_idx, "category"] = cat
-                                            df.at[loc_idx, "classification_source"] = "ai"
-                                            df.at[loc_idx, "is_excluded"] = 1 if cat == "제외" else 0
-                                            if conf >= 0.75 and br and cat:
-                                                df.at[loc_idx, "needs_review"] = 0
-                                    except Exception:
-                                        pass
-                        df    = recalc_vat(df)
-                        upsert_bank_transactions(df, bank, by, bm)
-                        total    = len(df)
-                        auto_ok  = int((df.needs_review == 0).sum())
-                        need_rev = int(df.needs_review.sum())
-                        ai_cnt   = int((df.get("classification_source", "") == "ai").sum()) if "classification_source" in df.columns else 0
-                        st.success(
-                            f"✅ {bank_names[bank]}: 총 {total}건 저장 "
-                            f"(자동분류 {auto_ok}건 / AI {ai_cnt}건 / 미분류 {need_rev}건)"
-                        )
-                        saved = True
-                    except Exception as e:
-                        st.error(f"❌ {bank_names[bank]} 저장 실패: {e}")
-                if not saved:
-                    st.warning("⚠️ 하나·신한 통장 시트를 찾지 못했습니다.")
-                else:
-                    if any(not bank_data[b].empty for b in bank_data):
-                        need_total = sum(int(df.needs_review.sum())
-                                         for df in bank_data.values() if not df.empty)
-                        if need_total > 0:
-                            st.info(f"📋 미분류 {need_total}건은 '규칙 관리 → 계정과목 검토'에서 확인하세요.")
-                    st.cache_data.clear()
+        if f_hana:
+            _sheet_preview(f_hana)
 
-        # ── 통장 데이터 클리어 ──────────────────────────
+        if f_hana and st.button("🟩 하나은행 저장", type="primary", key="b_bank_hana"):
+            with st.spinner("하나은행 처리 중..."):
+                try:
+                    f_hana.seek(0)
+                    xl = pd.ExcelFile(f_hana)
+                    df = parse_hana(xl, by, bm)
+                    _process_and_save(df, "hana", by, bm, _api_key, "하나은행")
+                except Exception as e:
+                    st.error(f"❌ 하나은행 저장 실패: {e}")
+
+        st.divider()
+
+        # ── 신한은행 ─────────────────────────────────────────
+        sec("🟦 신한은행 통장")
+        st.caption("신한은행 파일만 업로드 → 신한 데이터만 교체됩니다. 하나은행은 영향 없음.")
+        f_shinhan = st.file_uploader("신한통장.xlsx", type=["xlsx"], key="bank_shinhan")
+
+        if f_shinhan:
+            _sheet_preview(f_shinhan)
+
+        if f_shinhan and st.button("🟦 신한은행 저장", type="primary", key="b_bank_shinhan"):
+            with st.spinner("신한은행 처리 중..."):
+                try:
+                    f_shinhan.seek(0)
+                    xl = pd.ExcelFile(f_shinhan)
+                    df = parse_shinhan(xl, by, bm)
+                    _process_and_save(df, "shinhan", by, bm, _api_key, "신한은행")
+                except Exception as e:
+                    st.error(f"❌ 신한은행 저장 실패: {e}")
+
+        # ── 통장 데이터 클리어 ────────────────────────────────
         st.divider()
         st.caption("⚠️ 해당 월 통장내역 삭제 (재업로드 또는 초기화 시 사용)")
         bd1, bd2, bd3, bd4 = st.columns([1, 1, 1, 1])
@@ -212,3 +244,67 @@ def render_page():
             lbl = cl_bank_t if cl_bank_t != "전체" else "전체"
             st.success(f"✅ {cl_bank_y}년 {cl_bank_m}월 통장내역({lbl}) 삭제 완료")
             st.rerun()
+
+    # ── 백업 / 복원 ───────────────────────────────────────────
+    with tab3:
+        st.subheader("백업 / 복원")
+        st.markdown(
+            '<div class="al al-info">ℹ️&nbsp; DB 전체(모든 데이터)를 백업합니다. '
+            '최근 7개가 자동 유지됩니다. '
+            '복원 후에는 반드시 앱을 새로고침(F5)하세요.</div>',
+            unsafe_allow_html=True,
+        )
+
+        # 백업 생성
+        sec("백업 생성")
+        if st.button("💾 지금 백업 생성", type="primary", key="do_backup"):
+            try:
+                from backup import create_backup
+                create_backup()
+                ts_now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                st.success(f"✅ 백업 완료 — {ts_now}")
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ 백업 실패: {e}")
+
+        # 백업 목록 & 복원
+        sec("백업 목록 / 복원")
+        _BACKUP_DIR.mkdir(exist_ok=True)
+        backups = sorted(_BACKUP_DIR.glob("settlement_*.db"), reverse=True)
+
+        if not backups:
+            st.info("저장된 백업이 없습니다. 위에서 먼저 백업을 생성하세요.")
+        else:
+            st.caption(f"총 {len(backups)}개 백업 (최대 7개 유지)")
+            for i, bp in enumerate(backups):
+                size_mb = bp.stat().st_size / (1024 * 1024)
+                ts      = bp.stem.replace("settlement_", "")
+                try:
+                    dt    = datetime.strptime(ts, "%Y%m%d_%H%M%S")
+                    label = dt.strftime("%Y년 %m월 %d일  %H:%M:%S")
+                except Exception:
+                    label = ts
+
+                col_a, col_b, col_c = st.columns([5, 1, 1])
+                col_a.markdown(f"📦 **{label}** &nbsp; `{size_mb:.1f} MB`")
+
+                if col_b.button("🗑️", key=f"del_bk_{i}", use_container_width=True,
+                                help="이 백업 삭제"):
+                    bp.unlink()
+                    st.success(f"삭제 완료: {bp.name}")
+                    st.rerun()
+
+                if col_c.button("🔄 복원", key=f"restore_{i}", use_container_width=True):
+                    try:
+                        # 복원 전 현재 DB를 broken_ 으로 보존
+                        if _DB_PATH.exists():
+                            broken = _BACKUP_DIR / f"broken_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+                            shutil.copy2(_DB_PATH, broken)
+                        shutil.copy2(bp, _DB_PATH)
+                        st.cache_data.clear()
+                        st.success(
+                            f"✅ **{label}** 복원 완료  \n"
+                            "앱을 새로고침(F5)해야 변경사항이 반영됩니다."
+                        )
+                    except Exception as e:
+                        st.error(f"❌ 복원 실패: {e}")
