@@ -171,3 +171,18 @@ def build_summary(year: int, month: int) -> pd.DataFrame:
         axis=1,
     )
     return r.reset_index()
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def build_trend(year: int, up_to_month: int) -> pd.DataFrame:
+    """연간 추이용: 1~up_to_month 각 월 집계를 branch·month 컬럼 포함해 반환"""
+    frames = []
+    for m in range(1, up_to_month + 1):
+        df = build_summary(year, m)
+        if not df.empty:
+            tmp = df[["branch", "총매출", "총지출", "손익", "인건비합계"]].copy()
+            tmp["month"] = m
+            frames.append(tmp)
+    if not frames:
+        return pd.DataFrame()
+    return pd.concat(frames, ignore_index=True)
