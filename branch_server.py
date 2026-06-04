@@ -37,8 +37,10 @@ from domains.branch_app.db import (
 from domains.payroll.db import (
     init_payroll_tables,
     attendance_clock_in, attendance_clock_out,
+    attendance_break_start, attendance_break_end,
     get_attendance_record, get_monthly_attendance,
-    get_payroll_entries,
+    get_payroll_entries, calc_and_save_daily_pay,
+    get_daily_pay_records, get_monthly_pay_total,
     verify_employee_login,
 )
 from shared.db import get_conn
@@ -364,19 +366,56 @@ async def api_attendance_today(request: Request):
     user = require_staff(request)
     today = datetime.now().strftime("%Y-%m-%d")
     rec   = get_attendance_record(int(user["sub"]), today)
-    return rec or {"clock_in": None, "clock_out": None, "status": None, "work_minutes": 0}
+    return rec or {
+        "clock_in": None, "clock_out": None, "break_start": None,
+        "break_minutes": 0, "status": None, "work_minutes": 0
+    }
+
+
+import math as _math
+
+def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    R = 6_371_000
+    p1, p2 = _math.radians(lat1), _math.radians(lat2)
+    dp = _math.radians(lat2 - lat1)
+    dl = _math.radians(lng2 - lng1)
+    a  = _math.sin(dp/2)**2 + _math.cos(p1)*_math.cos(p2)*_math.sin(dl/2)**2
+    return R * 2 * _math.atan2(_math.sqrt(a), _math.sqrt(1 - a))
+
+
+def _gps_check(branch: str, user_lat: float | None, user_lng: float | None):
+    """GPS 위치 검증. 실패 시 HTTPException 발생. 지점 좌표 없으면 통과."""
+    conn = get_conn()
+    row  = conn.execute(
+        "SELECT lat, lng, attendance_radius FROM branches WHERE name=?", (branch,)
+    ).fetchone()
+    conn.close()
+    if not row or not row[0] or not row[1]:
+        return  # 지점 좌표 미등록 → GPS 체크 생략
+    b_lat, b_lng, radius = float(row[0]), float(row[1]), int(row[2] or 300)
+    if user_lat is None or user_lng is None:
+        raise HTTPException(status_code=400, detail="GPS 좌표가 필요합니다. 위치 권한을 허용해주세요.")
+    dist = _haversine_m(b_lat, b_lng, user_lat, user_lng)
+    if dist > radius:
+        raise HTTPException(
+            status_code=400,
+            detail=f"현재 위치가 지점에서 {dist:.0f}m 떨어져 있습니다. (허용 {radius}m 이내)"
+        )
 
 
 class ClockBody(BaseModel):
-    time: Optional[str] = None  # HH:MM, defaults to now
+    time: Optional[str] = None   # HH:MM, defaults to now
+    lat:  Optional[float] = None  # GPS 위도
+    lng:  Optional[float] = None  # GPS 경도
 
 
 @app.post("/api/attendance/clock-in")
 async def api_clock_in(request: Request, body: ClockBody):
-    user  = require_staff(request)
+    user   = require_staff(request)
     emp_id = int(user["sub"])
     today  = datetime.now().strftime("%Y-%m-%d")
     now_t  = body.time or datetime.now().strftime("%H:%M")
+    _gps_check(user.get("branch", ""), body.lat, body.lng)
     ok, msg = attendance_clock_in(emp_id, today, now_t)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
@@ -389,7 +428,7 @@ async def api_clock_out(request: Request, body: ClockBody):
     emp_id = int(user["sub"])
     today  = datetime.now().strftime("%Y-%m-%d")
     now_t  = body.time or datetime.now().strftime("%H:%M")
-    # Get work_start from employees table
+    _gps_check(user.get("branch", ""), body.lat, body.lng)
     conn = get_conn()
     emp_row = conn.execute(
         "SELECT work_start FROM employees WHERE id=?", (emp_id,)
@@ -399,7 +438,51 @@ async def api_clock_out(request: Request, body: ClockBody):
     ok, msg = attendance_clock_out(emp_id, today, now_t, work_start)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
+    # 시급제 급여 자동 계산
+    try:
+        calc_and_save_daily_pay(emp_id, today)
+    except Exception:
+        pass
     return {"ok": True, "time": now_t}
+
+
+@app.post("/api/attendance/break-start")
+async def api_break_start(request: Request, body: ClockBody):
+    user   = require_staff(request)
+    emp_id = int(user["sub"])
+    today  = datetime.now().strftime("%Y-%m-%d")
+    now_t  = body.time or datetime.now().strftime("%H:%M")
+    _gps_check(user.get("branch", ""), body.lat, body.lng)
+    ok, msg = attendance_break_start(emp_id, today, now_t)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "time": now_t}
+
+
+@app.post("/api/attendance/break-end")
+async def api_break_end(request: Request, body: ClockBody):
+    user   = require_staff(request)
+    emp_id = int(user["sub"])
+    today  = datetime.now().strftime("%Y-%m-%d")
+    now_t  = body.time or datetime.now().strftime("%H:%M")
+    _gps_check(user.get("branch", ""), body.lat, body.lng)
+    ok, msg = attendance_break_end(emp_id, today, now_t)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "msg": msg}
+
+
+@app.get("/api/attendance/pay")
+async def api_attendance_pay(request: Request, year: int = None, month: int = None):
+    """시급제 직원의 월별 급여 기록"""
+    user   = require_staff(request)
+    emp_id = int(user["sub"])
+    now    = datetime.now()
+    year   = year  or now.year
+    month  = month or now.month
+    records = get_daily_pay_records(emp_id, year, month)
+    total   = get_monthly_pay_total(emp_id, year, month)
+    return {"records": records, "total": total}
 
 
 @app.get("/api/attendance/monthly")

@@ -374,65 +374,112 @@
 
   window.openEvent = function (id) { showToast('이벤트 상세보기 준비 중'); };
 
+  // ── GPS 위치 취득 ─────────────────────────────────────────────
+  let _cachedGps = null;
+  let _gpsTs     = 0;
+
+  async function getGps() {
+    if (_cachedGps && Date.now() - _gpsTs < 120000) return _cachedGps; // 2분 캐시
+    return new Promise((resolve) => {
+      if (!navigator.geolocation) { resolve(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          _cachedGps = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+          _gpsTs = Date.now();
+          resolve(_cachedGps);
+        },
+        () => resolve(null),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+      );
+    });
+  }
+
   // ── Attendance ────────────────────────────────────────────────
+  function fmtMin(m) {
+    if (!m) return '—';
+    const h = Math.floor(m / 60), r = m % 60;
+    return h + '시간 ' + r + '분';
+  }
+
   async function renderAttendance(container) {
     if (user.role !== 'staff') {
       container.innerHTML = '<div class="page"><div class="empty">직원 전용 메뉴입니다</div></div>'; return;
     }
     container.innerHTML = '<div class="page"><div class="empty">근태 로딩 중…</div></div>';
     try {
-      const today = new Date().toISOString().slice(0, 10);
-      const resp  = await api('/api/attendance/today');
+      const today  = new Date().toISOString().slice(0, 10);
+      const resp   = await api('/api/attendance/today');
       if (!resp) return;
       const record = await resp.json();
 
-      const clockInBtn  = record.clock_in
-        ? `<button class="btn" disabled style="opacity:.6"><i data-lucide="check"></i> 출근 완료 ${record.clock_in}</button>`
-        : `<button class="btn primary" onclick="clockIn()"><i data-lucide="log-in"></i> 출근</button>`;
-      const clockOutBtn = record.clock_in && !record.clock_out
-        ? `<button class="btn ink" onclick="clockOut()"><i data-lucide="log-out"></i> 퇴근</button>` : '';
-      const workMin = record.work_minutes || 0;
-      const workHr  = Math.floor(workMin / 60);
-      const workRem = workMin % 60;
+      const ci  = record.clock_in;
+      const co  = record.clock_out;
+      const bks = record.break_start; // 현재 휴게 중 여부
+      const brk = record.break_minutes || 0;
+      const wm  = record.work_minutes || 0;
+
+      // 상태 뱃지
+      let statusBadge = '<span class="badge outline">미기록</span>';
+      if (co)       statusBadge = '<span class="badge ok">퇴근 완료</span>';
+      else if (bks) statusBadge = '<span class="badge warn">휴게 중</span>';
+      else if (ci)  statusBadge = '<span class="badge ok">근무 중</span>';
+
+      // 버튼 구성
+      let btnHtml = '';
+      if (!ci) {
+        btnHtml = `<button class="btn primary" onclick="clockIn()"><i data-lucide="log-in"></i> 출 근</button>`;
+      } else if (!co) {
+        if (bks) {
+          btnHtml = `
+            <button class="btn primary" onclick="breakEnd()"><i data-lucide="play"></i> 휴게 종료</button>
+            <button class="btn" style="background:#e60028;color:#fff" onclick="clockOut()"><i data-lucide="log-out"></i> 퇴 근</button>`;
+        } else {
+          btnHtml = `
+            <button class="btn ink" onclick="breakStart()"><i data-lucide="coffee"></i> 휴 게</button>
+            <button class="btn" style="background:#e60028;color:#fff" onclick="clockOut()"><i data-lucide="log-out"></i> 퇴 근</button>`;
+        }
+      }
 
       container.innerHTML = `
         <div class="page">
           <div class="section-title">근태 관리</div>
           <div class="section-sub">오늘 ${today} · ${user.name}</div>
+          <div id="gps-status" style="font-size:12px;color:#888;margin-bottom:8px">📍 위치 확인 중...</div>
 
-          <div class="grid-2" style="margin:16px 0 20px;max-width:560px">
-            <div class="stat">
-              <div class="label">출근 시간</div>
-              <div class="value" style="font-size:26px;font-weight:700">${record.clock_in || '—'}</div>
-            </div>
-            <div class="stat">
-              <div class="label">퇴근 시간</div>
-              <div class="value" style="font-size:26px;font-weight:700">${record.clock_out || '—'}</div>
-            </div>
-            <div class="stat">
-              <div class="label">근무 시간</div>
-              <div class="value">${workMin ? workHr + '시간 ' + workRem + '분' : '—'}</div>
-            </div>
-            <div class="stat">
-              <div class="label">상태</div>
-              <div class="value">
-                ${record.status ? `<span class="badge ${record.status === 'late' ? 'warn' : 'ok'}">${record.status === 'late' ? '지각' : '정상'}</span>` : '<span class="badge outline">미기록</span>'}
-              </div>
-            </div>
+          <div class="grid-2" style="margin:12px 0 18px;max-width:560px">
+            <div class="stat"><div class="label">출근 시간</div>
+              <div class="value" style="font-size:24px;font-weight:700">${ci || '—'}</div></div>
+            <div class="stat"><div class="label">퇴근 시간</div>
+              <div class="value" style="font-size:24px;font-weight:700">${co || '—'}</div></div>
+            <div class="stat"><div class="label">근무 시간</div>
+              <div class="value">${fmtMin(wm)}</div></div>
+            <div class="stat"><div class="label">상태</div>
+              <div class="value">${statusBadge}</div></div>
           </div>
+          ${brk ? `<div style="font-size:13px;color:#888;margin-bottom:12px">☕ 휴게 ${fmtMin(brk)} 반영</div>` : ''}
+          ${bks ? `<div style="font-size:13px;color:#d97706;margin-bottom:12px">☕ 휴게 중 (${bks} 시작)</div>` : ''}
 
-          <div style="display:flex;gap:10px;margin-bottom:28px">
-            ${clockInBtn}${clockOutBtn}
+          <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:28px" id="att-btns">
+            ${btnHtml}
           </div>
 
           <div class="card">
             <div class="card-head" style="padding:16px 20px 0">
-              <div class="card-title">이번 달 근태 기록</div>
+              <div class="card-title">이번 달 근태 · 급여</div>
             </div>
             <div id="monthlyAttendance" style="padding:0 20px 16px"><div class="empty">불러오는 중…</div></div>
           </div>
         </div>`;
       if (window.lucide) lucide.createIcons();
+
+      // GPS 상태 표시
+      getGps().then(gps => {
+        const el = document.getElementById('gps-status');
+        if (!el) return;
+        if (gps) el.textContent = '📍 위치 확인됨';
+        else     el.textContent = '⚠️ GPS 사용 불가 (위치 권한 확인)';
+      });
+
       loadMonthlyAttendance();
     } catch (err) {
       container.innerHTML = `<div class="page"><div class="empty">오류: ${err.message}</div></div>`;
@@ -441,41 +488,76 @@
 
   async function loadMonthlyAttendance() {
     const now  = new Date();
-    const resp = await api(`/api/attendance/monthly?year=${now.getFullYear()}&month=${now.getMonth()+1}`);
-    if (!resp) return;
-    const records = await resp.json();
+    const yr   = now.getFullYear(), mo = now.getMonth() + 1;
+    const [r1, r2] = await Promise.all([
+      api(`/api/attendance/monthly?year=${yr}&month=${mo}`),
+      api(`/api/attendance/pay?year=${yr}&month=${mo}`),
+    ]);
+    const records  = r1 ? await r1.json() : [];
+    const payData  = r2 ? await r2.json() : { records: [], total: 0 };
+    const payMap   = {};
+    (payData.records || []).forEach(p => { payMap[p.work_date] = p; });
     const el = document.getElementById('monthlyAttendance');
     if (!el) return;
+
     if (!records.length) { el.innerHTML = '<div class="empty">이번 달 근태 기록이 없습니다</div>'; return; }
-    el.innerHTML = `
+
+    const totalPay = payData.total || 0;
+    const payBanner = totalPay > 0
+      ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;
+                     margin-bottom:12px;font-size:14px;font-weight:600;color:#16a34a;">
+           💰 이번달 예상 급여: ${totalPay.toLocaleString()}원
+         </div>` : '';
+
+    el.innerHTML = payBanner + `
       <table class="table">
-        <thead><tr><th>날짜</th><th>출근</th><th>퇴근</th><th>근무</th><th>상태</th></tr></thead>
+        <thead><tr><th>날짜</th><th>출근</th><th>퇴근</th><th>근무</th><th>상태</th><th>급여</th></tr></thead>
         <tbody>
           ${records.map(r => {
-            const m = r.work_minutes || 0;
-            const h = Math.floor(m/60), rm = m%60;
+            const m  = r.work_minutes || 0;
+            const h  = Math.floor(m/60), rm = m%60;
+            const p  = payMap[r.work_date];
+            const payStr = p ? p.total_pay.toLocaleString() + '원' + (p.is_weekend || p.is_holiday ? ' 🏖' : '') : '—';
+            const statusTxt = r.status === 'late' ? '⚠️ 지각' : (r.clock_in ? '✅' : '—');
             return `<tr>
               <td>${r.work_date}</td>
               <td>${r.clock_in || '—'}</td>
               <td>${r.clock_out || '—'}</td>
               <td>${m ? h+'h '+rm+'m' : '—'}</td>
-              <td><span class="badge ${r.status === 'late' ? 'warn' : 'ok'}">${r.status === 'late' ? '지각' : '정상'}</span></td>
+              <td>${statusTxt}</td>
+              <td style="color:#16a34a;font-weight:600">${payStr}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table>`;
   }
 
-  window.clockIn = async function () {
+  async function _doAttendance(endpoint) {
+    const gps  = await getGps();
     const time = new Date().toTimeString().slice(0, 5);
-    const resp = await api('/api/attendance/clock-in', { method:'POST', body: JSON.stringify({ time }) });
-    if (resp && resp.ok) { showToast('출근 처리 완료 — ' + time); navigateTo('attendance'); }
+    const body = { time, lat: gps?.lat ?? null, lng: gps?.lng ?? null };
+    const resp = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
+    return { resp, time };
+  }
+
+  window.clockIn     = async function () {
+    const { resp, time } = await _doAttendance('/api/attendance/clock-in');
+    if (resp && resp.ok) { showToast('✅ 출근 — ' + time); navigateTo('attendance'); }
     else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
   };
-  window.clockOut = async function () {
-    const time = new Date().toTimeString().slice(0, 5);
-    const resp = await api('/api/attendance/clock-out', { method:'POST', body: JSON.stringify({ time }) });
-    if (resp && resp.ok) { showToast('퇴근 처리 완료 — ' + time); navigateTo('attendance'); }
+  window.clockOut    = async function () {
+    const { resp, time } = await _doAttendance('/api/attendance/clock-out');
+    if (resp && resp.ok) { showToast('✅ 퇴근 — ' + time); navigateTo('attendance'); }
+    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+  };
+  window.breakStart  = async function () {
+    const { resp, time } = await _doAttendance('/api/attendance/break-start');
+    if (resp && resp.ok) { showToast('☕ 휴게 시작 — ' + time); navigateTo('attendance'); }
+    else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
+  };
+  window.breakEnd    = async function () {
+    const { resp, time } = await _doAttendance('/api/attendance/break-end');
+    if (resp && resp.ok) { showToast('▶ 휴게 종료 — ' + time); navigateTo('attendance'); }
     else { const d = await resp?.json(); showToast(d?.detail || '오류', 'err'); }
   };
 
