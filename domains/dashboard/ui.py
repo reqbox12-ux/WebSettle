@@ -283,16 +283,12 @@ def render_page():
 
     if chk_all:
         sel_branches = BRANCH_LIST[:]
+        # 개별 체크박스 session_state 키 삭제 → 다음에 그리드 열릴 때 모두 미선택 상태
+        for _br in BRANCH_LIST:
+            st.session_state.pop(f"f_br_{_br}", None)
+        st.session_state["_sel_br_cache"] = []
     else:
-        prev_sel = st.session_state.get("_sel_br_cache", BRANCH_LIST[:])
-        # 전체 선택 / 전체 해제 버튼
-        _bc1, _bc2, _ = st.columns([1, 1, 6])
-        if _bc1.button("✅ 전체 선택", key="br_sel_all", use_container_width=True):
-            st.session_state["_sel_br_cache"] = BRANCH_LIST[:]
-            st.rerun()
-        if _bc2.button("⬜ 전체 해제", key="br_desel_all", use_container_width=True):
-            st.session_state["_sel_br_cache"] = []
-            st.rerun()
+        prev_sel = st.session_state.get("_sel_br_cache", [])
         n_col    = 5
         n_rows_g = (len(BRANCH_LIST) + n_col - 1) // n_col
         grid     = [st.columns(n_col) for _ in range(n_rows_g)]
@@ -301,6 +297,7 @@ def render_page():
             br for br, col in zip(BRANCH_LIST, flat)
             if col.checkbox(br, value=(br in prev_sel), key=f"f_br_{br}")
         ]
+        st.session_state["_sel_br_cache"] = sel_branches
         if not sel_branches:
             st.caption("⚠️ 지점을 하나 이상 선택하세요.")
     st.session_state["_sel_br_cache"] = sel_branches
