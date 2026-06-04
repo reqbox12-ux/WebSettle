@@ -7,7 +7,7 @@ from shared.config import BRANCH_LIST as _JSON_BRANCH_LIST
 
 
 def _migrate_branches(conn):
-    """branches 테이블에 address/lat/lng 컬럼 추가 (기존 DB 마이그레이션)"""
+    """branches 테이블에 컬럼 추가 (기존 DB 마이그레이션)"""
     existing = {row[1] for row in conn.execute("PRAGMA table_info(branches)")}
     if "address" not in existing:
         conn.execute("ALTER TABLE branches ADD COLUMN address TEXT DEFAULT ''")
@@ -15,6 +15,8 @@ def _migrate_branches(conn):
         conn.execute("ALTER TABLE branches ADD COLUMN lat REAL DEFAULT NULL")
     if "lng" not in existing:
         conn.execute("ALTER TABLE branches ADD COLUMN lng REAL DEFAULT NULL")
+    if "attendance_radius" not in existing:
+        conn.execute("ALTER TABLE branches ADD COLUMN attendance_radius INTEGER DEFAULT 300")
     conn.commit()
 
 
@@ -110,11 +112,17 @@ def upsert_branch(data: dict) -> int:
         except (TypeError, ValueError):
             lng = None
 
+    radius = data.get("attendance_radius")
+    try:
+        radius = int(radius) if radius is not None else 300
+    except (TypeError, ValueError):
+        radius = 300
+
     if not data.get("id"):
         cur = conn.execute(
             """INSERT INTO branches
-               (name, contract_date, termination_date, is_active, address, lat, lng, note)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (name, contract_date, termination_date, is_active, address, lat, lng, note, attendance_radius)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 data.get("name", "").strip(),
                 data.get("contract_date", ""),
@@ -123,6 +131,7 @@ def upsert_branch(data: dict) -> int:
                 data.get("address", ""),
                 lat, lng,
                 data.get("note", ""),
+                radius,
             ),
         )
         conn.commit()
@@ -132,7 +141,7 @@ def upsert_branch(data: dict) -> int:
         conn.execute(
             """UPDATE branches
                SET name=?, contract_date=?, termination_date=?, is_active=?,
-                   address=?, lat=?, lng=?, note=?
+                   address=?, lat=?, lng=?, note=?, attendance_radius=?
                WHERE id=?""",
             (
                 data.get("name", "").strip(),
@@ -142,6 +151,7 @@ def upsert_branch(data: dict) -> int:
                 data.get("address", ""),
                 lat, lng,
                 data.get("note", ""),
+                radius,
                 int(data["id"]),
             ),
         )
@@ -183,6 +193,20 @@ def upsert_branch_monthly_revenue(year: int, month: int, branch: str, data: dict
         ),
     )
     conn.commit()
+
+
+def get_branch_by_name(name: str) -> dict | None:
+    """지점명으로 지점 정보(위도·경도·반경 포함) 조회"""
+    conn = get_conn()
+    try:
+        cur  = conn.execute("SELECT * FROM branches WHERE name=?", (name,))
+        cols = [d[0] for d in cur.description]
+        row  = cur.fetchone()
+        return dict(zip(cols, row)) if row else None
+    except Exception:
+        return None
+    finally:
+        conn.close()
 
 
 def get_branch_monthly_revenue(year: int, month: int) -> list[dict]:

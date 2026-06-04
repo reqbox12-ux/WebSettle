@@ -659,15 +659,29 @@ def _render_branch_mgmt():
             key=lng_key,
         )
 
+        # 출퇴근 허용 반경
+        radius_key = f"loc_radius_{sel_br_name}"
+        if radius_key not in st.session_state:
+            st.session_state[radius_key] = int(sel_br.get("attendance_radius") or 300)
+        st.select_slider(
+            "📡 출퇴근 허용 반경",
+            options=list(range(100, 550, 50)),
+            key=radius_key,
+            format_func=lambda v: f"{v}m",
+            help="지점 좌표 기준, 이 반경 안에서만 출퇴근 가능",
+        )
+
         if st.button("💾 위치 정보 저장", key="loc_save_btn", use_container_width=True):
             updated = dict(sel_br)
-            updated["address"] = st.session_state.get(f"loc_addr_{sel_br_name}", "").strip()
-            updated["lat"]     = float(lat_input) if abs(float(lat_input)) > 0.0001 else None
-            updated["lng"]     = float(lng_input) if abs(float(lng_input)) > 0.0001 else None
+            updated["address"]           = st.session_state.get(f"loc_addr_{sel_br_name}", "").strip()
+            updated["lat"]               = float(lat_input) if abs(float(lat_input)) > 0.0001 else None
+            updated["lng"]               = float(lng_input) if abs(float(lng_input)) > 0.0001 else None
+            updated["attendance_radius"] = int(st.session_state.get(radius_key, 300))
             upsert_branch(updated)
             # 저장 후 session_state 초기화 (다음 번에 DB에서 새로 읽도록)
             st.session_state.pop(lat_key, None)
             st.session_state.pop(lng_key, None)
+            st.session_state.pop(radius_key, None)
             st.success(f"✅ '{sel_br_name}' 위치 정보 저장 완료")
             st.rerun()
 

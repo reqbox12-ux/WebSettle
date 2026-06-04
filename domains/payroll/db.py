@@ -256,6 +256,7 @@ def init_payroll_tables():
     _migrate_employees_emp_type(conn)
     _migrate_employees_add_columns(conn)
     _migrate_payroll_entries_unique(conn)
+    _migrate_attendance_breaks(conn)
 
     # 기본 4대보험 요율 (2025년)
     exists = conn.execute("SELECT id FROM insurance_rates WHERE year=2025").fetchone()
@@ -803,6 +804,16 @@ def reset_employee_password(employee_id: int, new_pw: str) -> bool:
         return False
 
 
+def _migrate_attendance_breaks(conn):
+    """attendance 테이블에 break_start / break_end 컬럼 추가"""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(attendance)")}
+    if "break_start" not in cols:
+        conn.execute("ALTER TABLE attendance ADD COLUMN break_start TEXT DEFAULT NULL")
+    if "break_end" not in cols:
+        conn.execute("ALTER TABLE attendance ADD COLUMN break_end TEXT DEFAULT NULL")
+    conn.commit()
+
+
 # ── 근태 기록 (출퇴근) ────────────────────────────────────────
 
 def attendance_clock_in(employee_id: int, work_date: str, clock_time: str) -> tuple[bool, str]:
@@ -833,29 +844,41 @@ def attendance_clock_in(employee_id: int, work_date: str, clock_time: str) -> tu
 
 def attendance_clock_out(employee_id: int, work_date: str, clock_time: str,
                          work_start: str = "09:00") -> tuple[bool, str]:
-    """퇴근 기록 + 근무시간·지각 여부 자동 계산"""
+    """퇴근 기록 + 근무시간·지각 여부 자동 계산 (휴게 시간 반영)"""
     from datetime import datetime as _dt, timedelta as _td
     conn = get_conn()
     try:
         existing = conn.execute(
-            "SELECT id, clock_in FROM attendance WHERE employee_id=? AND work_date=?",
+            "SELECT id, clock_in, break_start, break_minutes FROM attendance WHERE employee_id=? AND work_date=?",
             (employee_id, work_date)
         ).fetchone()
         if not existing or not existing[1]:
             conn.close()
             return False, "출근 기록이 없습니다."
 
-        # 근무시간 계산
+        # 총 경과시간
         try:
             ci = _dt.strptime(existing[1], "%H:%M")
             co = _dt.strptime(clock_time, "%H:%M")
             total_min = max(0, int((co - ci).total_seconds() / 60))
-            break_min = 30 if total_min >= 480 else 0
-            work_min  = max(0, total_min - break_min)
         except Exception:
-            work_min, break_min = 0, 0
+            total_min = 0
 
-        # 지각 판정 (기준시간 + 10분 초과 시)
+        # 휴게 중 퇴근 시 진행 중인 휴게도 계산
+        acc_break = existing[3] or 0
+        if existing[2]:  # break_start 남아있으면 아직 휴게 중
+            try:
+                bs  = _dt.strptime(existing[2], "%H:%M")
+                co2 = _dt.strptime(clock_time, "%H:%M")
+                acc_break += max(0, int((co2 - bs).total_seconds() / 60))
+            except Exception:
+                pass
+
+        # 수동 휴게 기록 있으면 우선 사용, 없으면 8h+ 자동 30분
+        break_min = acc_break if acc_break > 0 else (30 if total_min >= 480 else 0)
+        work_min  = max(0, total_min - break_min)
+
+        # 지각 판정
         try:
             ws  = _dt.strptime(work_start, "%H:%M")
             ci2 = _dt.strptime(existing[1], "%H:%M")
@@ -865,11 +888,67 @@ def attendance_clock_out(employee_id: int, work_date: str, clock_time: str,
 
         conn.execute("""
             UPDATE attendance
-            SET clock_out=?, work_minutes=?, break_minutes=?, status=?
+            SET clock_out=?, work_minutes=?, break_minutes=?, status=?, break_start=NULL
             WHERE id=?
         """, (clock_time, work_min, break_min, status, existing[0]))
         conn.commit()
         return True, clock_time
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def attendance_break_start(employee_id: int, work_date: str, break_time: str) -> tuple[bool, str]:
+    """휴게 시작 기록"""
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id, clock_in, clock_out, break_start FROM attendance WHERE employee_id=? AND work_date=?",
+            (employee_id, work_date)
+        ).fetchone()
+        if not existing or not existing[1]:
+            return False, "출근 기록이 없습니다."
+        if existing[2]:
+            return False, "이미 퇴근한 상태입니다."
+        if existing[3]:
+            return False, "이미 휴게 중입니다."
+        conn.execute(
+            "UPDATE attendance SET break_start=? WHERE id=?",
+            (break_time, existing[0])
+        )
+        conn.commit()
+        return True, break_time
+    except Exception as e:
+        return False, str(e)
+    finally:
+        conn.close()
+
+
+def attendance_break_end(employee_id: int, work_date: str, end_time: str) -> tuple[bool, str]:
+    """휴게 종료 기록 (break_minutes 누적)"""
+    from datetime import datetime as _dt
+    conn = get_conn()
+    try:
+        existing = conn.execute(
+            "SELECT id, break_start, break_minutes FROM attendance WHERE employee_id=? AND work_date=?",
+            (employee_id, work_date)
+        ).fetchone()
+        if not existing or not existing[1]:
+            return False, "휴게 기록이 없습니다."
+        try:
+            bs  = _dt.strptime(existing[1], "%H:%M")
+            be  = _dt.strptime(end_time, "%H:%M")
+            added = max(0, int((be - bs).total_seconds() / 60))
+        except Exception:
+            added = 0
+        new_break = (existing[2] or 0) + added
+        conn.execute(
+            "UPDATE attendance SET break_start=NULL, break_end=?, break_minutes=? WHERE id=?",
+            (end_time, new_break, existing[0])
+        )
+        conn.commit()
+        return True, f"{added}분 휴게"
     except Exception as e:
         return False, str(e)
     finally:
