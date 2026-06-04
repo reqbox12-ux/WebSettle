@@ -278,16 +278,21 @@ def render_page():
     st.session_state.month = month
 
     # 지점 멀티셀렉 (체크박스 그리드)
-    chk_all = st.checkbox("전체 지점", value=st.session_state.get("_f_br_all", True), key="f_br_all")
-    st.session_state["_f_br_all"] = chk_all
+    prev_was_all = st.session_state.get("_f_br_all_prev", True)
+    chk_all = st.checkbox("전체 지점", value=True, key="f_br_all")
+    st.session_state["_f_br_all_prev"] = chk_all
 
     if chk_all:
         sel_branches = BRANCH_LIST[:]
-        # 개별 체크박스 session_state 키 삭제 → 다음에 그리드 열릴 때 모두 미선택 상태
-        for _br in BRANCH_LIST:
-            st.session_state.pop(f"f_br_{_br}", None)
+        # 전체→개별 전환 준비: 버전 리셋 + 캐시 초기화
+        st.session_state["_br_grid_ver"] = 0
         st.session_state["_sel_br_cache"] = []
     else:
+        # 전체(True) → 개별(False) 전환 시 버전 올림 → 위젯 키가 바뀌어 모두 미선택으로 초기화
+        if prev_was_all:
+            st.session_state["_br_grid_ver"]  = st.session_state.get("_br_grid_ver", 0) + 1
+            st.session_state["_sel_br_cache"] = []
+        ver      = st.session_state.get("_br_grid_ver", 0)
         prev_sel = st.session_state.get("_sel_br_cache", [])
         n_col    = 5
         n_rows_g = (len(BRANCH_LIST) + n_col - 1) // n_col
@@ -295,7 +300,7 @@ def render_page():
         flat     = [c for row in grid for c in row]
         sel_branches = [
             br for br, col in zip(BRANCH_LIST, flat)
-            if col.checkbox(br, value=(br in prev_sel), key=f"f_br_{br}")
+            if col.checkbox(br, value=(br in prev_sel), key=f"f_br_{br}_v{ver}")
         ]
         st.session_state["_sel_br_cache"] = sel_branches
         if not sel_branches:
