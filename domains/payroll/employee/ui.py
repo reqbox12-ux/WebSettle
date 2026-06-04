@@ -97,13 +97,14 @@ def render():
                 "base_salary": "기본급", "meal_allowance": "식대",
                 "transport": "교통비", "email": "이메일",
                 "phone": "전화번호", "work_start": "출근시간", "work_end": "퇴근시간",
-                "hourly_rate": "시급", "join_date": "입사/등록일", "is_active": "재직",
+                "break_minutes": "휴게(분)", "hourly_rate": "시급",
+                "join_date": "입사/등록일", "is_active": "재직",
             }
             edit_df = df[[c for c in display_cols if c in df.columns]].copy()
             edit_df = edit_df.rename(columns=display_cols)
             edit_df["유형"] = edit_df["유형"].map(EMP_TYPE_SHORT).fillna(edit_df["유형"])
             edit_df["재직"] = edit_df["재직"].apply(lambda v: bool(v))
-            for col in ["부양가족", "기본급", "식대", "교통비", "시급"]:
+            for col in ["부양가족", "기본급", "식대", "교통비", "휴게(분)", "시급"]:
                 if col in edit_df.columns:
                     edit_df[col] = pd.to_numeric(edit_df[col], errors="coerce").fillna(0).astype(int)
 
@@ -127,6 +128,8 @@ def render():
                     "전화번호":   st.column_config.TextColumn("전화번호"),
                     "출근시간":   st.column_config.TextColumn("출근시간", help="HH:MM 형식 (예: 09:00)"),
                     "퇴근시간":   st.column_config.TextColumn("퇴근시간", help="HH:MM 형식 (예: 18:00)"),
+                    "휴게(분)":   st.column_config.NumberColumn("휴게(분)", format="%d", min_value=0,
+                                                                help="정규 휴게시간(분). 예: 1시간=60"),
                     "시급":       st.column_config.NumberColumn("시급", format="%d", min_value=0),
                     "입사/등록일": st.column_config.TextColumn("입사/등록일"),
                     "재직":       st.column_config.CheckboxColumn("재직"),
@@ -153,7 +156,7 @@ def render():
                             elif db_col == "is_active":
                                 emp[db_col] = 1 if val else 0
                             elif db_col in ("base_salary", "meal_allowance", "transport",
-                                            "dependents", "hourly_rate"):
+                                            "dependents", "hourly_rate", "break_minutes"):
                                 emp[db_col] = int(val or 0)
                             else:
                                 emp[db_col] = str(val or "").strip()
@@ -208,12 +211,15 @@ def render():
         emp_phone = col11.text_input("전화번호 (기본 비밀번호 뒷4자리)", key="emp_phone",
                                      placeholder="010-1234-5678")
 
-        col12, col13, col14 = st.columns(3)
+        col12, col13, col14, col15 = st.columns(4)
         emp_wstart = col12.text_input("출근시간", value="09:00", key="emp_wstart",
                                       help="HH:MM 형식 (지각 판정 기준)")
         emp_wend   = col13.text_input("퇴근시간", value="18:00", key="emp_wend",
                                       help="HH:MM 형식")
-        emp_hwage  = col14.number_input("시급 (시간제 해당자)", min_value=0, step=100,
+        emp_break  = col14.number_input("정규 휴게(분)", min_value=0, step=30, value=60,
+                                        key="emp_break",
+                                        help="정규 휴게시간(분). 예: 1시간=60. 버튼 미사용시에도 자동 차감")
+        emp_hwage  = col15.number_input("시급 (시간제 해당자)", min_value=0, step=100,
                                         key="emp_hwage", help="월급제는 0 입력")
 
         if is_business:
@@ -251,6 +257,7 @@ def render():
                     "phone":          emp_phone.strip(),
                     "work_start":     emp_wstart.strip() or "09:00",
                     "work_end":       emp_wend.strip() or "18:00",
+                    "break_minutes":  int(emp_break),
                     "hourly_rate":    int(emp_hwage),
                     "id_number":      emp_idnum.strip() if emp_idnum else "",
                     "join_date":      emp_join.strip(),

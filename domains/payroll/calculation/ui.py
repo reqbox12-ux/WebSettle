@@ -20,6 +20,7 @@ from domains.payroll.db import (
     get_tax_brackets, upsert_tax_brackets,
     is_payroll_locked, lock_payroll, unlock_payroll,
     get_insurance_actual, delete_payroll_entries,
+    get_public_holidays, upsert_public_holiday, delete_public_holiday,
 )
 from domains.payroll.calculation.service import calc_insured, calc_freelance, calc_business
 from domains.payroll.insurance.service import apply_insurance_actuals, parse_tax_brackets
@@ -590,3 +591,41 @@ def _render_settings():
         st.caption(f"현재 등록된 간이세액표: {_now.year}년 기준 {len(brackets)}개 구간")
     else:
         st.info("간이세액표가 없습니다. 업로드하거나 기본 계산식이 사용됩니다.")
+
+    st.divider()
+    sec("📅 공휴일 관리 (시급제 급여 할증 기준)")
+    import pandas as pd
+    hol_c1, hol_c2 = st.columns([1, 3])
+    hol_year = hol_c1.number_input("연도", min_value=2020, max_value=2035,
+                                    value=_now.year, step=1, key="hol_yr")
+    holidays = get_public_holidays(int(hol_year))
+
+    if holidays:
+        hol_df = pd.DataFrame(holidays)[["id", "holiday_date", "name"]]
+        hol_df.columns = ["ID", "날짜", "공휴일명"]
+        st.dataframe(hol_df, use_container_width=True, hide_index=True)
+        del_id = st.number_input("삭제할 공휴일 ID", min_value=1, step=1, key="hol_del_id")
+        if st.button("🗑️ 공휴일 삭제", key="hol_del_btn"):
+            delete_public_holiday(int(del_id))
+            st.success("삭제 완료")
+            st.rerun()
+    else:
+        st.info(f"{int(hol_year)}년 등록된 공휴일이 없습니다.")
+
+    st.markdown("##### 공휴일 추가")
+    with st.form("hol_add_form"):
+        ha1, ha2 = st.columns([1, 2])
+        new_hdate = ha1.text_input("날짜 (YYYY-MM-DD)", placeholder="2025-10-03")
+        new_hname = ha2.text_input("공휴일명", placeholder="개천절")
+        if st.form_submit_button("추가", type="primary"):
+            if new_hdate and new_hname:
+                try:
+                    from datetime import date as _d
+                    yr = _d.fromisoformat(new_hdate).year
+                    if upsert_public_holiday(new_hdate, new_hname, yr):
+                        st.success(f"✅ {new_hdate} {new_hname} 추가 완료")
+                        st.rerun()
+                except ValueError:
+                    st.error("날짜 형식이 잘못됐습니다. YYYY-MM-DD로 입력하세요.")
+            else:
+                st.error("날짜와 공휴일명 모두 입력하세요.")

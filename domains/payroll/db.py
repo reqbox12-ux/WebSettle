@@ -37,7 +37,7 @@ def _migrate_employees_emp_type(conn):
 
 
 def _migrate_employees_add_columns(conn):
-    """phone, work_start, work_end, hourly_rate 컬럼 마이그레이션 (기존 DB 호환)"""
+    """phone, work_start, work_end, hourly_rate, break_minutes 컬럼 마이그레이션"""
     cols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
     if "phone" not in cols:
         conn.execute("ALTER TABLE employees ADD COLUMN phone TEXT DEFAULT ''")
@@ -47,6 +47,8 @@ def _migrate_employees_add_columns(conn):
         conn.execute("ALTER TABLE employees ADD COLUMN work_end TEXT DEFAULT '18:00'")
     if "hourly_rate" not in cols:
         conn.execute("ALTER TABLE employees ADD COLUMN hourly_rate INTEGER DEFAULT 0")
+    if "break_minutes" not in cols:
+        conn.execute("ALTER TABLE employees ADD COLUMN break_minutes INTEGER DEFAULT 0")
     conn.commit()
 
 
@@ -251,12 +253,64 @@ def init_payroll_tables():
             created_at      TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(employee_id, work_date)
         );
+
+        -- 일별 급여 기록 (시급제 직원)
+        CREATE TABLE IF NOT EXISTS daily_pay_records (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id      INTEGER NOT NULL,
+            work_date        TEXT NOT NULL,
+            work_minutes     INTEGER DEFAULT 0,
+            regular_minutes  INTEGER DEFAULT 0,
+            night_minutes    INTEGER DEFAULT 0,
+            is_weekend       INTEGER DEFAULT 0,
+            is_holiday       INTEGER DEFAULT 0,
+            hourly_rate      REAL DEFAULT 0,
+            regular_pay      INTEGER DEFAULT 0,
+            extra_pay        INTEGER DEFAULT 0,
+            total_pay        INTEGER DEFAULT 0,
+            note             TEXT DEFAULT '',
+            created_at       TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(employee_id, work_date)
+        );
+
+        -- 공휴일 관리
+        CREATE TABLE IF NOT EXISTS public_holidays (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            holiday_date TEXT UNIQUE NOT NULL,
+            name         TEXT NOT NULL,
+            year         INTEGER NOT NULL
+        );
     """)
     conn.commit()
     _migrate_employees_emp_type(conn)
     _migrate_employees_add_columns(conn)
     _migrate_payroll_entries_unique(conn)
     _migrate_attendance_breaks(conn)
+
+    # 대한민국 법정 공휴일 기본 시딩 (2025–2026)
+    _KR_HOLIDAYS = [
+        ("2025-01-01","신정",2025), ("2025-01-28","설날 연휴",2025),
+        ("2025-01-29","설날",2025), ("2025-01-30","설날 연휴",2025),
+        ("2025-03-01","삼일절",2025), ("2025-05-05","어린이날·석가탄신일",2025),
+        ("2025-05-06","어린이날 대체공휴일",2025), ("2025-06-06","현충일",2025),
+        ("2025-08-15","광복절",2025), ("2025-10-05","추석 연휴",2025),
+        ("2025-10-06","추석",2025), ("2025-10-07","추석 연휴",2025),
+        ("2025-10-09","한글날",2025), ("2025-12-25","성탄절",2025),
+        ("2026-01-01","신정",2026), ("2026-02-16","설날 연휴",2026),
+        ("2026-02-17","설날",2026), ("2026-02-18","설날 연휴",2026),
+        ("2026-03-01","삼일절",2026), ("2026-05-05","어린이날",2026),
+        ("2026-05-24","석가탄신일",2026), ("2026-06-06","현충일",2026),
+        ("2026-08-15","광복절",2026), ("2026-09-24","추석 연휴",2026),
+        ("2026-09-25","추석",2026), ("2026-09-26","추석 연휴",2026),
+        ("2026-10-03","개천절",2026), ("2026-10-09","한글날",2026),
+        ("2026-12-25","성탄절",2026),
+    ]
+    for _hd, _hn, _hy in _KR_HOLIDAYS:
+        conn.execute(
+            "INSERT OR IGNORE INTO public_holidays (holiday_date, name, year) VALUES (?,?,?)",
+            (_hd, _hn, _hy)
+        )
+    conn.commit()
 
     # 기본 4대보험 요율 (2025년)
     exists = conn.execute("SELECT id FROM insurance_rates WHERE year=2025").fetchone()
@@ -844,45 +898,64 @@ def attendance_clock_in(employee_id: int, work_date: str, clock_time: str) -> tu
 
 def attendance_clock_out(employee_id: int, work_date: str, clock_time: str,
                          work_start: str = "09:00") -> tuple[bool, str]:
-    """퇴근 기록 + 근무시간·지각 여부 자동 계산 (휴게 시간 반영)"""
+    """퇴근 기록 — 유효 근무 창(스케줄 기준 클램프) + 정규 휴게시간 적용"""
     from datetime import datetime as _dt, timedelta as _td
     conn = get_conn()
     try:
+        # 직원 스케줄 정보 조회
+        emp = conn.execute(
+            "SELECT work_start, work_end, break_minutes FROM employees WHERE id=?",
+            (employee_id,)
+        ).fetchone()
+        sched_start = (emp[0] if emp and emp[0] else None) or work_start
+        sched_end   = (emp[1] if emp and emp[1] else None) or "23:59"
+        sched_break = int(emp[2] if emp and emp[2] else 0)
+
+        # 출근 기록 조회
         existing = conn.execute(
-            "SELECT id, clock_in, break_start, break_minutes FROM attendance WHERE employee_id=? AND work_date=?",
+            "SELECT id, clock_in, break_start, break_minutes FROM attendance "
+            "WHERE employee_id=? AND work_date=?",
             (employee_id, work_date)
         ).fetchone()
         if not existing or not existing[1]:
             conn.close()
             return False, "출근 기록이 없습니다."
 
-        # 총 경과시간
+        actual_ci = existing[1]
+
+        # ── 유효 근무 창 계산 ──────────────────────────────────
+        # 일찍 와도 스케줄 시작부터, 늦게 가도 스케줄 종료까지만 인정
         try:
-            ci = _dt.strptime(existing[1], "%H:%M")
-            co = _dt.strptime(clock_time, "%H:%M")
-            total_min = max(0, int((co - ci).total_seconds() / 60))
+            ci_dt  = _dt.strptime(f"{work_date} {actual_ci}",   "%Y-%m-%d %H:%M")
+            co_dt  = _dt.strptime(f"{work_date} {clock_time}",  "%Y-%m-%d %H:%M")
+            ws_dt  = _dt.strptime(f"{work_date} {sched_start}", "%Y-%m-%d %H:%M")
+            we_dt  = _dt.strptime(f"{work_date} {sched_end}",   "%Y-%m-%d %H:%M")
+            eff_start = max(ci_dt, ws_dt)
+            eff_end   = min(co_dt, we_dt)
+            total_min = max(0, int((eff_end - eff_start).total_seconds() / 60)) \
+                        if eff_end > eff_start else 0
         except Exception:
             total_min = 0
 
-        # 휴게 중 퇴근 시 진행 중인 휴게도 계산
+        # ── 휴게시간 결정 ──────────────────────────────────────
+        # 버튼으로 기록된 휴게 시간
         acc_break = existing[3] or 0
-        if existing[2]:  # break_start 남아있으면 아직 휴게 중
+        if existing[2]:  # break_start 남아있으면 아직 휴게 중 → 자동 종료 처리
             try:
                 bs  = _dt.strptime(existing[2], "%H:%M")
-                co2 = _dt.strptime(clock_time, "%H:%M")
+                co2 = _dt.strptime(clock_time,  "%H:%M")
                 acc_break += max(0, int((co2 - bs).total_seconds() / 60))
             except Exception:
                 pass
-
-        # 수동 휴게 기록 있으면 우선 사용, 없으면 8h+ 자동 30분
-        break_min = acc_break if acc_break > 0 else (30 if total_min >= 480 else 0)
+        # 설정된 정규 휴게 vs 실제 기록 → 큰 값 사용 (직원에게 유리)
+        break_min = max(acc_break, sched_break)
         work_min  = max(0, total_min - break_min)
 
-        # 지각 판정
+        # ── 지각 판정 ─────────────────────────────────────────
         try:
-            ws  = _dt.strptime(work_start, "%H:%M")
-            ci2 = _dt.strptime(existing[1], "%H:%M")
-            status = "late" if ci2 > ws + _td(minutes=10) else "present"
+            ws2 = _dt.strptime(sched_start, "%H:%M")
+            ci2 = _dt.strptime(actual_ci,   "%H:%M")
+            status = "late" if ci2 > ws2 + _td(minutes=10) else "present"
         except Exception:
             status = "present"
 
@@ -1012,3 +1085,159 @@ def log_email(year: int, month: int, employee_id: int,
         return True
     except Exception:
         return False
+
+
+# ══════════════════════════════════════════════════════════════════
+#  공휴일 관리
+# ══════════════════════════════════════════════════════════════════
+
+def get_public_holidays(year: int) -> list[dict]:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM public_holidays WHERE year=? ORDER BY holiday_date", (year,)
+    )
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def upsert_public_holiday(holiday_date: str, name: str, year: int) -> bool:
+    try:
+        conn = get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO public_holidays (holiday_date, name, year) VALUES (?,?,?)",
+            (holiday_date, name, year)
+        )
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def delete_public_holiday(holiday_id: int) -> bool:
+    try:
+        conn = get_conn()
+        conn.execute("DELETE FROM public_holidays WHERE id=?", (holiday_id,))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def _get_holiday_set(year: int) -> set:
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT holiday_date FROM public_holidays WHERE year=?", (year,)
+    ).fetchall()
+    conn.close()
+    return {r[0] for r in rows}
+
+
+# ══════════════════════════════════════════════════════════════════
+#  일별 급여 계산 (시급제)
+# ══════════════════════════════════════════════════════════════════
+
+def calc_and_save_daily_pay(employee_id: int, work_date: str) -> dict | None:
+    from datetime import datetime as _dt, date as _date
+    conn = get_conn()
+    try:
+        emp_row = conn.execute(
+            "SELECT work_start, work_end, break_minutes, hourly_rate FROM employees WHERE id=?",
+            (employee_id,)
+        ).fetchone()
+        if not emp_row:
+            return None
+        hourly_rate = float(emp_row[3] or 0)
+        if hourly_rate <= 0:
+            return None
+        sched_start = emp_row[0] or "09:00"
+        sched_end   = emp_row[1] or "18:00"
+        sched_break = int(emp_row[2] or 0)
+        att = conn.execute(
+            "SELECT clock_in, clock_out, break_minutes FROM attendance "
+            "WHERE employee_id=? AND work_date=?",
+            (employee_id, work_date)
+        ).fetchone()
+        if not att or not att[0] or not att[1]:
+            return None
+        actual_ci, actual_co = att[0], att[1]
+        actual_break = int(att[2] or 0)
+        try:
+            ci_dt = _dt.strptime(f"{work_date} {actual_ci}",   "%Y-%m-%d %H:%M")
+            co_dt = _dt.strptime(f"{work_date} {actual_co}",   "%Y-%m-%d %H:%M")
+            ws_dt = _dt.strptime(f"{work_date} {sched_start}", "%Y-%m-%d %H:%M")
+            we_dt = _dt.strptime(f"{work_date} {sched_end}",   "%Y-%m-%d %H:%M")
+            eff_start = max(ci_dt, ws_dt)
+            eff_end   = min(co_dt, we_dt)
+            total_min = max(0, int((eff_end - eff_start).total_seconds() / 60)) if eff_end > eff_start else 0
+        except Exception:
+            return None
+        break_min = max(actual_break, sched_break)
+        net_min   = max(0, total_min - break_min)
+        d          = _date.fromisoformat(work_date)
+        is_wknd    = d.weekday() >= 5
+        hset       = _get_holiday_set(d.year)
+        is_hol     = work_date in hset
+        is_special = is_wknd or is_hol
+        try:
+            night_b = _dt.strptime(f"{work_date} 22:00", "%Y-%m-%d %H:%M")
+            if eff_end <= night_b or net_min == 0:
+                regular_min, night_min = net_min, 0
+            else:
+                pre_min  = max(0, int((night_b - eff_start).total_seconds() / 60))
+                post_min = total_min - pre_min
+                regular_min = max(0, pre_min  - break_min)
+                night_min   = max(0, post_min - max(0, break_min - pre_min))
+        except Exception:
+            regular_min, night_min = net_min, 0
+        rpm = hourly_rate / 60
+        if is_special:
+            regular_pay = round(regular_min * rpm * 1.5)
+            extra_pay   = round(night_min   * rpm * 2.0)
+        else:
+            regular_pay = round(regular_min * rpm * 1.0)
+            extra_pay   = round(night_min   * rpm * 1.5)
+        total_pay = regular_pay + extra_pay
+        conn.execute("""
+            INSERT OR REPLACE INTO daily_pay_records
+            (employee_id, work_date, work_minutes, regular_minutes, night_minutes,
+             is_weekend, is_holiday, hourly_rate, regular_pay, extra_pay, total_pay)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (employee_id, work_date, net_min, regular_min, night_min,
+              int(is_wknd), int(is_hol), hourly_rate, regular_pay, extra_pay, total_pay))
+        conn.commit()
+        return {"work_minutes": net_min, "regular_minutes": regular_min,
+                "night_minutes": night_min, "is_weekend": int(is_wknd),
+                "is_holiday": int(is_hol), "hourly_rate": hourly_rate,
+                "regular_pay": regular_pay, "extra_pay": extra_pay, "total_pay": total_pay}
+    except Exception as e:
+        print(f"[calc_and_save_daily_pay] {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def get_daily_pay_records(employee_id: int, year: int, month: int) -> list[dict]:
+    conn = get_conn()
+    cur  = conn.execute(
+        "SELECT * FROM daily_pay_records WHERE employee_id=? AND work_date LIKE ? ORDER BY work_date",
+        (employee_id, f"{year}-{month:02d}%")
+    )
+    cols = [d[0] for d in cur.description]
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def get_monthly_pay_total(employee_id: int, year: int, month: int) -> int:
+    conn = get_conn()
+    row  = conn.execute(
+        "SELECT COALESCE(SUM(total_pay),0) FROM daily_pay_records "
+        "WHERE employee_id=? AND work_date LIKE ?",
+        (employee_id, f"{year}-{month:02d}%")
+    ).fetchone()
+    conn.close()
+    return int(row[0]) if row else 0
