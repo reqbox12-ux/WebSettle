@@ -401,9 +401,29 @@
     return h + '시간 ' + r + '분';
   }
 
+  function isMobile() {
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+  }
+
   async function renderAttendance(container) {
     if (user.role !== 'staff') {
       container.innerHTML = '<div class="page"><div class="empty">직원 전용 메뉴입니다</div></div>'; return;
+    }
+    // PC 접속 차단
+    if (!isMobile()) {
+      container.innerHTML = `
+        <div class="page">
+          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                      padding:60px 24px;text-align:center;gap:16px">
+            <div style="font-size:56px">📱</div>
+            <div style="font-size:20px;font-weight:700;color:#1a1a1a">모바일에서 접속해 주세요</div>
+            <div style="font-size:14px;color:#666;line-height:1.7;max-width:320px">
+              출퇴근 기록은 GPS 위치 확인이 필요합니다.<br>
+              휴대폰으로 접속하여 출퇴근 버튼을 눌러주세요.
+            </div>
+          </div>
+        </div>`;
+      return;
     }
     container.innerHTML = '<div class="page"><div class="empty">근태 로딩 중…</div></div>';
     try {
@@ -472,12 +492,22 @@
         </div>`;
       if (window.lucide) lucide.createIcons();
 
-      // GPS 상태 표시
+      // GPS 상태 표시 + 버튼 제어
       getGps().then(gps => {
-        const el = document.getElementById('gps-status');
+        const el   = document.getElementById('gps-status');
+        const btns = document.getElementById('att-btns');
         if (!el) return;
-        if (gps) el.textContent = '📍 위치 확인됨';
-        else     el.textContent = '⚠️ GPS 사용 불가 (위치 권한 확인)';
+        if (gps) {
+          el.textContent = '📍 위치 확인됨';
+          el.style.color = '#16a34a';
+        } else {
+          el.innerHTML = '⚠️ GPS 권한이 필요합니다 — 브라우저 주소창의 🔒 아이콘에서 위치 권한을 허용해 주세요';
+          el.style.color = '#e60028';
+          if (btns) {
+            btns.innerHTML = `<div style="font-size:13px;color:#e60028;padding:8px 0">
+              GPS 위치를 확인할 수 없어 출퇴근 처리가 불가합니다.<br>위치 권한 허용 후 새로고침 해주세요.</div>`;
+          }
+        }
       });
 
       loadMonthlyAttendance();
@@ -535,11 +565,11 @@
   async function _doAttendance(endpoint) {
     const gps  = await getGps();
     const time = new Date().toTimeString().slice(0, 5);
-    const body = { time, lat: gps?.lat ?? null, lng: gps?.lng ?? null };
-    // GPS 취득 실패 시 경고 (차단 안 함 — HTTP LAN 환경에서는 브라우저가 GPS를 허용하지 않음)
     if (!gps) {
-      showToast('⚠️ GPS 미확인 — 위치 검증 없이 처리됩니다', 'warn');
+      showToast('📍 GPS 위치를 확인할 수 없습니다. 위치 권한을 허용하고 다시 시도해 주세요.', 'err');
+      return { resp: null, time };
     }
+    const body = { time, lat: gps.lat, lng: gps.lng };
     const resp = await api(endpoint, { method: 'POST', body: JSON.stringify(body) });
     return { resp, time };
   }

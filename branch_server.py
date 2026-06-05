@@ -385,21 +385,21 @@ def _haversine_m(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
 
 def _gps_check(branch: str, user_lat: float | None, user_lng: float | None) -> str:
     """
-    GPS 위치 검증. 반환값: 'ok' | 'skipped' | HTTPException 발생(범위 이탈)
-    - 지점 좌표 미등록 → 'skipped' (체크 불필요)
-    - 클라이언트 GPS 취득 실패(HTTP LAN, PC 등) → 'skipped' (경고만, 차단 안 함)
+    GPS 위치 검증. 반환값: 'ok' | 'skipped'
+    - GPS null → HTTPException 400 (모바일 전용, GPS 필수)
+    - 지점 좌표 미등록 → 'skipped'
     - 범위 이탈 → HTTPException 400
     """
+    if user_lat is None or user_lng is None:
+        raise HTTPException(status_code=400, detail="GPS 위치를 확인할 수 없습니다. 위치 권한을 허용하고 다시 시도해 주세요.")
     conn = get_conn()
     row  = conn.execute(
         "SELECT lat, lng, attendance_radius FROM branches WHERE name=?", (branch,)
     ).fetchone()
     conn.close()
     if not row or not row[0] or not row[1]:
-        return "skipped"  # 지점 좌표 미등록
+        return "skipped"  # 지점 좌표 미등록 — GPS 좌표만 기록
     b_lat, b_lng, radius = float(row[0]), float(row[1]), int(row[2] or 300)
-    if user_lat is None or user_lng is None:
-        return "skipped"  # GPS 취득 불가 (HTTP LAN / PC / 타임아웃) → 경고만, 차단 안 함
     dist = _haversine_m(b_lat, b_lng, user_lat, user_lng)
     if dist > radius:
         raise HTTPException(
