@@ -14,4 +14,5 @@ from modules.db import (  # noqa: F401
     DB_PATH,
     delete_card_sales, delete_bank_transactions,
     delete_keyword_rule, update_keyword_rule,
+    get_branch_goals, set_branch_goal,
 )

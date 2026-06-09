@@ -309,29 +309,52 @@ I_RULE   = '<svg viewBox="0 0 24 24"><path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 
 I_MOON   = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
 I_SUN    = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'
 I_ACCT   = '<svg viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>'
+I_CLOCK  = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'
+I_SET    = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>'
+
+# ── 미분류 건수 뱃지 ─────────────────────────────────────────
+def _unclassified_count() -> int:
+    """미분류(검토필요) 거래 건수"""
+    try:
+        from modules.db import get_conn
+        conn = get_conn()
+        if conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM bank_transactions WHERE needs_review=1"
+            ).fetchone()
+            return row[0] if row else 0
+    except Exception:
+        pass
+    return 0
+
 
 # ── 사이드바 렌더링 ───────────────────────────────────────────
 def _render_sidebar():
     logo_h = get_logo_html(mobile=False)
+    unclf  = _unclassified_count()
 
-    def _link(p, lbl, ic):
-        cls = "on" if page == p else ""
+    def _link(p, lbl, ic, badge: int = 0):
+        cls      = "on" if page == p else ""
+        bdg_html = (
+            f'<span style="margin-left:auto;background:var(--red);color:#fff;'
+            f'border-radius:999px;font-size:10px;font-weight:700;'
+            f'padding:1px 7px;min-width:20px;text-align:center">{badge}</span>'
+            if badge > 0 else ""
+        )
         return (f'<a href="?page={p}&t={_session_token}" target="_self" '
-                f'class="sb-item {cls}">{ic}{lbl}</a>')
+                f'class="sb-item {cls}">{ic}{lbl}{bdg_html}</a>')
 
     # 섹션별 메뉴
-    ws_nav   = _link("dashboard", "대시보드",    I_DASH)
-    mgmt_nav = _link("branch",    "지점",        I_BRANCH) + \
-               _link("payroll",   "인사",        I_PAY)
-    acct_nav = _link("upload",    "손익 데이터", I_UP) + \
-               _link("rules",     "규칙 데이터", I_RULE)
-
-    # 계정 관리 (admin 전용) — 푸터에 배치
-    acct_mgmt = ""
-    if _auth_user.get("role") == "admin":
-        cls = "on" if page == "accounts" else ""
-        acct_mgmt = (f'<a href="?page=accounts&t={_session_token}" target="_self" '
-                     f'class="sb-item {cls}">{I_ACCT}계정 관리</a>')
+    ws_nav   = _link("dashboard",      "대시보드",    I_DASH)
+    mgmt_nav = (
+        _link("branch",        "지점별",      I_BRANCH) +
+        _link("payroll",       "인사/급여",   I_PAY) +
+        _link("attendance_erp","출퇴근 현황", I_CLOCK)
+    )
+    data_nav = (
+        _link("upload",  "데이터 업로드", I_UP) +
+        _link("settings","설정",         I_SET, badge=unclf)
+    )
 
     # 로그아웃 링크 (URL 방식)
     logout_link = (
@@ -365,11 +388,10 @@ def _render_sidebar():
         {ws_nav}
         <div class="sb-sec">관리</div>
         {mgmt_nav}
-        <div class="sb-sec">회계</div>
-        {acct_nav}
+        <div class="sb-sec">데이터</div>
+        {data_nav}
       </div>
       <div class="sb-foot">
-        {acct_mgmt}
         {logout_link}
         {user_info}
         {theme_link}
@@ -379,17 +401,23 @@ def _render_sidebar():
 
 
 def _render_bnav():
+    unclf = _unclassified_count()
     items = [
-        ("dashboard", "대시보드", I_DASH),
-        ("branch",    "지점",     I_BRANCH),
-        ("payroll",   "인사",     I_PAY),
-        ("upload",    "손익",     I_UP),
-        ("rules",     "규칙",     I_RULE),
+        ("dashboard",      "대시보드", I_DASH,  0),
+        ("branch",         "지점별",   I_BRANCH,0),
+        ("payroll",        "인사",     I_PAY,   0),
+        ("upload",         "업로드",   I_UP,    0),
+        ("settings",       "설정",     I_SET,   unclf),
     ]
     h = '<div class="bnav">'
-    for p, lbl, ic in items:
-        cls = "on" if page == p else ""
-        h  += f'<a href="?page={p}&t={_session_token}" target="_self" class="{cls}">{ic}<span>{lbl}</span></a>'
+    for p, lbl, ic, badge in items:
+        cls   = "on" if page == p else ""
+        bdg   = (f'<span style="position:absolute;top:4px;right:calc(50% - 18px);'
+                 f'background:var(--red);color:#fff;border-radius:999px;'
+                 f'font-size:9px;font-weight:700;padding:0 4px;min-width:14px;text-align:center">'
+                 f'{badge}</span>') if badge > 0 else ""
+        h += (f'<a href="?page={p}&t={_session_token}" target="_self" '
+              f'class="{cls}" style="position:relative">{ic}{bdg}<span>{lbl}</span></a>')
     h += '</div>'
     st.markdown(h, unsafe_allow_html=True)
 
@@ -414,16 +442,25 @@ elif page == "payroll":
     from domains.payroll.ui import render_page
     render_page()
 
+elif page == "attendance_erp":
+    from domains.attendance_erp.ui import render_page
+    render_page()
+
 elif page == "upload":
     from domains.upload.ui import render_page
     render_page()
 
+elif page == "settings":
+    from domains.settings.ui import render_page
+    render_page(_auth_user)
+
+# 하위 호환: 기존 rules / accounts URL 유지
 elif page == "rules":
-    from domains.rules.ui import render_page
-    render_page()
+    from domains.settings.ui import render_page
+    render_page(_auth_user)
 
 elif page == "accounts":
-    from domains.accounts.ui import render_page
+    from domains.settings.ui import render_page
     render_page(_auth_user)
 
 else:

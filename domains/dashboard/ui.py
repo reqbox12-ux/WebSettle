@@ -323,11 +323,38 @@ def render_page():
     prev_month = month - 1 if month > 1 else 12
     prev_full  = build_summary(prev_year, prev_month)
 
+    # 전년 동월
+    yoy_full = build_summary(year - 1, month)
+
     view_df = full_df[full_df.branch.isin(sel_branches)].copy() if not full_df.empty else full_df.copy()
     prev_df = prev_full[prev_full.branch.isin(sel_branches)].copy() if not prev_full.empty else pd.DataFrame()
+    yoy_df  = yoy_full[yoy_full.branch.isin(sel_branches)].copy() if not yoy_full.empty else pd.DataFrame()
 
     # ── KPI ──────────────────────────────────────────────────
     render_kpi(view_df, prev_df if not prev_df.empty else None)
+
+    # ── 전년 동월 비교 ────────────────────────────────────────
+    if not yoy_df.empty:
+        cur_rev = int(view_df["총매출"].sum()) if not view_df.empty else 0
+        yoy_rev = int(yoy_df["총매출"].sum())
+        cur_pnl = int(view_df["손익"].sum()) if not view_df.empty else 0
+        yoy_pnl = int(yoy_df["손익"].sum())
+        diff_rev = cur_rev - yoy_rev
+        diff_pnl = cur_pnl - yoy_pnl
+        rev_sign = "▲" if diff_rev >= 0 else "▼"
+        pnl_sign = "▲" if diff_pnl >= 0 else "▼"
+        rev_col  = "var(--pos)" if diff_rev >= 0 else "var(--red)"
+        pnl_col  = "var(--pos)" if diff_pnl >= 0 else "var(--red)"
+        st.markdown(
+            f'<div class="al al-info" style="display:flex;gap:32px;flex-wrap:wrap">'
+            f'<span>📅 <b>전년 동월 비교</b> ({year-1}년 {month}월 대비)</span>'
+            f'<span>총매출 <b style="color:{rev_col}">{rev_sign} {abs(diff_rev):,}원</b> '
+            f'({"+{:,}".format(diff_rev) if diff_rev>=0 else "{:,}".format(diff_rev)}원)</span>'
+            f'<span>손익 <b style="color:{pnl_col}">{pnl_sign} {abs(diff_pnl):,}원</b> '
+            f'({"+{:,}".format(diff_pnl) if diff_pnl>=0 else "{:,}".format(diff_pnl)}원)</span>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
     # ── 테이블 섹션 ───────────────────────────────────────────
     br_label = "전체 지점" if len(sel_branches) == len(BRANCH_LIST) else f"선택 {len(sel_branches)}개 지점"
@@ -402,6 +429,32 @@ def render_page():
             )
         table_html += '</tbody></table></div>'
         st.markdown(table_html, unsafe_allow_html=True)
+
+    # ── Excel 내보내기 ────────────────────────────────────────
+    try:
+        import io
+        xl_buf = io.BytesIO()
+        # 전체 상세 데이터 준비
+        export_cols = {
+            "branch": "지점", "카드공급가액": "카드공급가액", "카드수수료": "카드수수료",
+            "카드실수령": "카드실수령", "현금공급가액": "현금공급가액", "현금VAT": "현금VAT",
+            "총매출": "총매출", "인건비합계": "인건비합계", "기타지출": "기타지출",
+            "부가세합계": "부가세합계", "총지출": "총지출", "손익": "손익", "이익률": "이익률(%)",
+        }
+        xl_df = view_df[[c for c in export_cols if c in view_df.columns]].copy()
+        xl_df = xl_df.rename(columns=export_cols)
+        with pd.ExcelWriter(xl_buf, engine="openpyxl") as writer:
+            xl_df.to_excel(writer, sheet_name=f"{year}년{month:02d}월", index=False)
+        xl_buf.seek(0)
+        st.download_button(
+            label="📥 Excel 내보내기",
+            data=xl_buf.getvalue(),
+            file_name=f"손익현황_{year}년{month:02d}월.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_summary_xl",
+        )
+    except Exception:
+        pass
 
     # ── 차트: 매출·지출 비교 + 손익 순위 ────────────────────────
     sec("지점별 매출 · 지출 · 손익")

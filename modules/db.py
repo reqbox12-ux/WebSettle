@@ -237,6 +237,15 @@ def init_db():
                 accident     INTEGER DEFAULT 0,
                 UNIQUE(year, month, branch)
             );
+
+            CREATE TABLE IF NOT EXISTS branch_goals (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                year        INTEGER NOT NULL,
+                month       INTEGER NOT NULL,
+                branch      TEXT NOT NULL,
+                goal_amount INTEGER DEFAULT 0,
+                UNIQUE(year, month, branch)
+            );
         """)
         # SQLite 마이그레이션
         for col_def in [
@@ -902,3 +911,39 @@ def get_keyword_rules(bank: str = None):
             )
         conn.close()
         return df
+
+
+# ── 지점 목표 매출 ────────────────────────────────────────────
+def get_branch_goals(year: int, month: int) -> dict:
+    """지점별 목표 매출 조회 {branch: goal_amount}"""
+    conn = get_conn()
+    if not conn:
+        return {}
+    try:
+        rows = conn.execute(
+            "SELECT branch, goal_amount FROM branch_goals WHERE year=? AND month=?",
+            (year, month)
+        ).fetchall()
+        conn.close()
+        return {r[0]: r[1] for r in rows}
+    except Exception:
+        return {}
+
+
+def set_branch_goal(year: int, month: int, branch: str, goal_amount: int):
+    """지점 목표 매출 저장 (upsert)"""
+    conn = get_conn()
+    if not conn:
+        return
+    try:
+        conn.execute(
+            """INSERT INTO branch_goals (year, month, branch, goal_amount)
+               VALUES (?,?,?,?)
+               ON CONFLICT(year, month, branch)
+               DO UPDATE SET goal_amount=excluded.goal_amount""",
+            (year, month, branch, goal_amount)
+        )
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"set_branch_goal error: {e}")

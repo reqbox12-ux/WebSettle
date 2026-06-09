@@ -411,6 +411,51 @@ def _render_detail(year: int, month: int):
     curr_d = br_row.iloc[0].to_dict() if not br_row.empty else _empty_row(br_sel)
     prev_d = prev_row.iloc[0].to_dict() if not prev_row.empty else _empty_row(br_sel)
 
+    # ── 목표 매출 설정 & 달성률 ────────────────────────────────
+    try:
+        from modules.db import get_branch_goals, set_branch_goal
+        goals = get_branch_goals(year, month)
+        cur_goal = goals.get(br_sel, 0)
+        actual_rev = int(curr_d.get("총매출", 0))
+
+        with st.expander("🎯 목표 매출 설정", expanded=(cur_goal == 0 and actual_rev > 0)):
+            g1, g2 = st.columns([3, 1])
+            new_goal = g1.number_input(
+                f"{year}년 {month}월 · {br_sel} 목표 매출 (원)",
+                value=cur_goal,
+                step=1_000_000,
+                min_value=0,
+                key=f"goal_{br_sel}_{year}_{month}",
+                format="%d",
+            )
+            g2.markdown("<br>", unsafe_allow_html=True)
+            if g2.button("💾 저장", key=f"goal_save_{br_sel}_{year}_{month}",
+                          use_container_width=True):
+                set_branch_goal(year, month, br_sel, int(new_goal))
+                st.success("목표 저장 완료")
+                st.rerun()
+
+        if cur_goal > 0:
+            achieve_rate = (actual_rev / cur_goal * 100) if cur_goal else 0
+            color = "var(--pos)" if achieve_rate >= 100 else ("var(--warn)" if achieve_rate >= 70 else "var(--red)")
+            st.markdown(
+                f'<div style="background:var(--sf);border:1px solid var(--bd);border-radius:var(--rs);'
+                f'padding:12px 18px;margin-bottom:16px;display:flex;align-items:center;gap:16px">'
+                f'<span style="font-size:12px;color:var(--ink3)">🎯 목표 매출</span>'
+                f'<span style="font-size:14px;font-weight:700;color:var(--ink)">'
+                f'{cur_goal:,}원</span>'
+                f'<span style="font-size:12px;color:var(--ink3)">달성률</span>'
+                f'<span style="font-size:18px;font-weight:800;color:{color}">'
+                f'{achieve_rate:.1f}%</span>'
+                f'<div style="flex:1;background:var(--sf2);border-radius:999px;height:8px;overflow:hidden">'
+                f'<div style="width:{min(achieve_rate,100):.1f}%;height:100%;'
+                f'background:{color};transition:width .5s"></div></div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+    except Exception:
+        pass
+
     # ── 전월 대비 KPI 카드
     st.markdown(
         f'<div style="display:flex;align-items:center;justify-content:space-between;'

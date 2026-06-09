@@ -19,7 +19,9 @@ from shared.utils import sec
 from modules.parser import (
     parse_card_aggregate, parse_credit_card,
     parse_hana, parse_shinhan, recalc_vat,
+    parse_payroll_insured, parse_payroll_freelance,
 )
+from shared.db import upsert_payroll
 from modules.classifier import classify_transactions
 from modules.ai_classifier import ai_classify_batch, load_api_key
 
@@ -115,7 +117,7 @@ def render_page():
     )
 
     _api_key = load_api_key()
-    tab1, tab2, tab3 = st.tabs(["카드 매출", "통장 내역", "🗄️ 백업/복원"])
+    tab1, tab2, tab3, tab4 = st.tabs(["카드 매출", "통장 내역", "💰 급여", "🗄️ 백업/복원"])
 
     # ── 카드 매출 ─────────────────────────────────────────────
     with tab1:
@@ -245,8 +247,64 @@ def render_page():
             st.success(f"✅ {cl_bank_y}년 {cl_bank_m}월 통장내역({lbl}) 삭제 완료")
             st.rerun()
 
-    # ── 백업 / 복원 ───────────────────────────────────────────
+    # ── 급여 ──────────────────────────────────────────────────
     with tab3:
+        st.subheader("급여 데이터 업로드")
+        st.markdown(
+            '<div class="al al-info">ℹ️&nbsp; 급여 집계 엑셀을 업로드합니다. '
+            '<b>지점별집계</b> 시트(4대보험) 및 <b>사업소득자</b> 시트(프리랜서)가 있어야 합니다.<br>'
+            '상세 급여 계산(개인별 급여명세서)은 <b>인사/급여 → 급여계산</b> 탭을 이용하세요.</div>',
+            unsafe_allow_html=True,
+        )
+        py1, py2 = st.columns(2)
+        pay_year  = py1.number_input("연도", value=_now.year, min_value=2020, max_value=2030, key="pay_y")
+        pay_month = py2.selectbox("월", list(range(1, 13)), index=_now.month - 1, key="pay_m",
+                                   format_func=lambda m: f"{m}월")
+
+        pay_file = st.file_uploader("급여_집계.xlsx", type=["xlsx", "xls"], key="pay_xl")
+
+        if pay_file and st.button("📥 급여 데이터 저장", type="primary", key="pay_save"):
+            with st.spinner("처리 중..."):
+                try:
+                    pay_file.seek(0)
+                    xl = pd.ExcelFile(pay_file)
+                    sheets = xl.sheet_names
+                    insured_ok   = False
+                    freelance_ok = False
+
+                    if "지점별집계" in sheets:
+                        df_ins = parse_payroll_insured(xl, int(pay_year), int(pay_month))
+                        if not df_ins.empty:
+                            upsert_payroll(df_ins, int(pay_year), int(pay_month), "insured")
+                            insured_ok = True
+
+                    if "사업소득자" in sheets:
+                        df_free = parse_payroll_freelance(xl, int(pay_year), int(pay_month))
+                        if not df_free.empty:
+                            upsert_payroll(df_free, int(pay_year), int(pay_month), "freelance")
+                            freelance_ok = True
+
+                    if insured_ok or freelance_ok:
+                        parts = []
+                        if insured_ok:   parts.append("4대보험")
+                        if freelance_ok: parts.append("프리랜서")
+                        st.success(f"✅ {pay_year}년 {pay_month}월 급여 저장 완료 ({' · '.join(parts)})")
+                        st.cache_data.clear()
+                    else:
+                        st.warning(
+                            "⚠️ 인식된 시트가 없습니다. "
+                            "'지점별집계' 또는 '사업소득자' 시트가 있어야 합니다. "
+                            f"현재 시트: {', '.join(sheets)}"
+                        )
+                except Exception as e:
+                    st.error(f"❌ 오류: {e}")
+
+        st.divider()
+        st.caption("💡 개인별 급여명세서·세금 등 상세 급여 처리는 인사/급여 탭을 이용하세요.")
+        st.page_link("http://localhost:8501/?page=payroll", label="→ 인사/급여 페이지로 이동", icon="💼")
+
+    # ── 백업 / 복원 ───────────────────────────────────────────
+    with tab4:
         st.subheader("백업 / 복원")
         st.markdown(
             '<div class="al al-info">ℹ️&nbsp; DB 전체(모든 데이터)를 백업합니다. '
