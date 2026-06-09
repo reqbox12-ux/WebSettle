@@ -347,7 +347,7 @@ def _render_sidebar():
     # 섹션별 메뉴
     ws_nav   = _link("dashboard",      "대시보드",    I_DASH)
     mgmt_nav = (
-        _link("branch",        "지점별",      I_BRANCH) +
+        _link("branch",        "지점",        I_BRANCH) +
         _link("payroll",       "인사/급여",   I_PAY) +
         _link("attendance_erp","출퇴근 현황", I_CLOCK)
     )
@@ -404,7 +404,7 @@ def _render_bnav():
     unclf = _unclassified_count()
     items = [
         ("dashboard",      "대시보드", I_DASH,  0),
-        ("branch",         "지점별",   I_BRANCH,0),
+        ("branch",         "지점",     I_BRANCH,0),
         ("payroll",        "인사",     I_PAY,   0),
         ("upload",         "업로드",   I_UP,    0),
         ("settings",       "설정",     I_SET,   unclf),

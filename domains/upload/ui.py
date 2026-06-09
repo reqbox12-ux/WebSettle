@@ -117,7 +117,7 @@ def render_page():
     )
 
     _api_key = load_api_key()
-    tab1, tab2, tab3, tab4 = st.tabs(["카드 매출", "통장 내역", "💰 급여", "🗄️ 백업/복원"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["카드 매출", "통장 내역", "💰 급여", "🏥 4대보험 고지내역", "🗄️ 백업/복원"])
 
     # ── 카드 매출 ─────────────────────────────────────────────
     with tab1:
@@ -303,8 +303,14 @@ def render_page():
         st.caption("💡 개인별 급여명세서·세금 등 상세 급여 처리는 인사/급여 탭을 이용하세요.")
         st.page_link("http://localhost:8501/?page=payroll", label="→ 인사/급여 페이지로 이동", icon="💼")
 
-    # ── 백업 / 복원 ───────────────────────────────────────────
+    # ── 4대보험 고지내역 ──────────────────────────────────────
     with tab4:
+        st.subheader("4대보험 고지내역 업로드")
+        from domains.payroll.insurance.ui import _render_upload as _ins_upload
+        _ins_upload()
+
+    # ── 백업 / 복원 ───────────────────────────────────────────
+    with tab5:
         st.subheader("백업 / 복원")
         st.markdown(
             '<div class="al al-info">ℹ️&nbsp; DB 전체(모든 데이터)를 백업합니다. '

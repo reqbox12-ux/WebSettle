@@ -107,7 +107,8 @@ def _render_mom_chart(curr: dict, prev: dict, year: int, month: int, key: str):
                        font=dict(size=11)),
         "bargap": 0.25, "bargroupgap": 0.1,
     })
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={"staticPlot": True, "displayModeBar": False})
 
 
 # ── 손익계산서 통합 패널 ─────────────────────────────────────
@@ -335,7 +336,8 @@ def _render_yearly_trend(br_sel: str, year: int, month: int):
                        zeroline=True, zerolinecolor="rgba(31,27,27,.2)"),
         "xaxis":  dict(tickfont=dict(size=11)),
     })
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True,
+                    config={"staticPlot": True, "displayModeBar": False})
 
 
 # ── 지점 페이지 메인 ─────────────────────────────────────────
@@ -866,11 +868,12 @@ def _render_monthly_revenue(year: int, month: int):
 
 def _render_pdf_section(full_df, br_sel: str, year: int, month: int):
     from domains.branch.pdf import gen_pdf_html
+    import io
     _ALL_BRANCHES = get_active_branch_names()
     sec("정산서 내보내기")
     st.markdown(
         '<div class="al al-info">ℹ️&nbsp; 포함할 지점을 선택한 후 다운로드하세요. '
-        '브라우저에서 열고 Ctrl+P → PDF 저장</div>',
+        'HTML은 브라우저에서 열고 Ctrl+P → PDF 저장, Excel은 바로 다운로드 가능합니다.</div>',
         unsafe_allow_html=True,
     )
 
@@ -887,9 +890,10 @@ def _render_pdf_section(full_df, br_sel: str, year: int, month: int):
         pdf_branches = [b for b, col in zip(available_br, flat)
                         if col.checkbox(b, value=(b == br_sel), key=f"pdf_br_{b}")]
 
+    exp_df_pdf = c_exp(year, month)
+    rev_df_pdf = c_rev(year, month)
+
     if pdf_branches:
-        exp_df_pdf   = c_exp(year, month)
-        rev_df_pdf   = c_rev(year, month)
         html_content = gen_pdf_html(full_df, pdf_branches, year, month,
                                     exp_df=exp_df_pdf, rev_df=rev_df_pdf)
         html_b64 = base64.b64encode(html_content.encode("utf-8")).decode()
@@ -899,7 +903,7 @@ def _render_pdf_section(full_df, br_sel: str, year: int, month: int):
             f'style="background:#E60028;color:#fff;border-radius:8px;font-weight:600;'
             f'font-size:14px;padding:10px 22px;text-decoration:none;'
             f'white-space:nowrap;display:inline-block;'
-            f'box-shadow:0 2px 6px rgba(230,0,40,.3)">📄 정산서 다운로드</a>'
+            f'box-shadow:0 2px 6px rgba(230,0,40,.3)">📄 HTML 정산서 다운로드</a>'
         )
     else:
         btn_part = (
@@ -916,6 +920,67 @@ def _render_pdf_section(full_df, br_sel: str, year: int, month: int):
         f'</div>{btn_part}</div>',
         unsafe_allow_html=True,
     )
+
+    # ── Excel 손익계산서 다운로드 ──────────────────────────────
+    if pdf_branches:
+        try:
+            xl_buf = io.BytesIO()
+            with pd.ExcelWriter(xl_buf, engine="openpyxl") as writer:
+                for br in pdf_branches:
+                    br_row = full_df[full_df.branch == br]
+                    if br_row.empty:
+                        continue
+                    d = br_row.iloc[0].to_dict()
+
+                    # 지출 카테고리별 상세
+                    exp_detail = {}
+                    if not exp_df_pdf.empty:
+                        br_exp = exp_df_pdf[exp_df_pdf.branch == br]
+                        exp_detail = br_exp.set_index("category")["amount"].to_dict() if not br_exp.empty else {}
+
+                    rows_xl = [
+                        ("", "항목", "금액 (원)"),
+                        ("매출", "카드 공급가액",    int(d.get("카드공급가액", 0))),
+                        ("",     "카드 수수료",      -int(d.get("카드수수료", 0))),
+                        ("",     "카드 실수령",       int(d.get("카드실수령", 0))),
+                        ("",     "현금 공급가액",     int(d.get("현금공급가액", 0))),
+                        ("",     "직접입력 매출",     int(d.get("수동입력매출", 0))),
+                        ("",     "▶ 총매출",          int(d.get("총매출", 0))),
+                        ("지출", "급여",              int(d.get("급여", 0))),
+                        ("",     "4대보험(직원)",      int(d.get("4대보험료_직원", 0))),
+                        ("",     "4대보험(본사)",      int(d.get("4대보험_본사", 0))),
+                        ("",     "소득세·지방세",      int(d.get("소득세지방세", 0))),
+                        ("",     "프리랜서",           int(d.get("프리랜서", 0))),
+                        ("",     "인건비합계",         int(d.get("인건비합계", 0))),
+                        ("",     "기타지출",           int(d.get("기타지출", 0))),
+                        ("",     "부가세합계",         int(d.get("부가세합계", 0))),
+                        ("",     "▶ 총지출",           int(d.get("총지출", 0))),
+                        ("손익", "▶ 순손익",           int(d.get("손익", 0))),
+                        ("",     "이익률",             f"{float(d.get('이익률', 0)):.1f}%"),
+                    ]
+                    df_xl = pd.DataFrame(rows_xl, columns=["구분", "항목", "금액"])
+                    # 시트 이름 최대 31자 제한
+                    sheet_name = br[:31]
+                    df_xl.to_excel(writer, sheet_name=sheet_name, index=False)
+
+                    # 숫자 열 서식
+                    ws = writer.sheets[sheet_name]
+                    for row_i in range(2, len(rows_xl) + 2):
+                        cell = ws.cell(row=row_i, column=3)
+                        if isinstance(cell.value, int):
+                            cell.number_format = '#,##0'
+
+            xl_buf.seek(0)
+            fn_xl = f"손익계산서_{year}년{month:02d}월.xlsx"
+            st.download_button(
+                label="📊 Excel 손익계산서 다운로드",
+                data=xl_buf.getvalue(),
+                file_name=fn_xl,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_pnl_xl",
+            )
+        except Exception as e:
+            st.caption(f"Excel 생성 오류: {e}")
 
 
 # ── 지점 보고 뷰 (ERP ↔ 랜딩페이지 연동) ─────────────────────────────────────

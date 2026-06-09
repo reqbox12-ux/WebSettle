@@ -131,7 +131,8 @@ def render_chart(df, key="ch"):
         "xaxis":  dict(tickangle=-30, tickfont=_tf, color="#1F1B1B"),
         "margin": dict(t=16, b=70, l=10, r=10),
     })
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={"staticPlot": True, "displayModeBar": False})
 
 
 # ── 지출 구성 도넛 차트 ───────────────────────────────────────
@@ -165,7 +166,8 @@ def render_donut_chart(df, key="donut"):
             font=dict(size=12, family="Pretendard Variable,sans-serif", color="#1F1B1B"),
         )],
     })
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={"staticPlot": True, "displayModeBar": False})
 
 
 # ── 연간 추이 꺾은선 차트 ─────────────────────────────────────
@@ -213,7 +215,8 @@ def render_trend_chart(year, month, sel_branches, key="trend"):
         "legend": dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1,
                        font=dict(size=11, family="Pretendard Variable,sans-serif")),
     })
-    st.plotly_chart(fig, use_container_width=True, key=key)
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={"staticPlot": True, "displayModeBar": False})
 
 
 # ── 손익 순위 카드 ────────────────────────────────────────────
