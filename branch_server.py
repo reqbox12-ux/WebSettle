@@ -84,6 +84,13 @@ app = FastAPI(title="라온스포츠 지점 포털", version="3.0.0")
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(TEMPLATE_DIR))
 
+# 정적 파일 캐시 무효화: app.js 수정 시각을 버전으로 사용 (?v=...)
+try:
+    _ASSET_VER = str(int((STATIC_DIR / "js" / "app.js").stat().st_mtime))
+except Exception:
+    _ASSET_VER = "1"
+templates.env.globals["asset_ver"] = _ASSET_VER
+
 
 # ── Startup ────────────────────────────────────────────────────────────────────
 def init_all_tables():
