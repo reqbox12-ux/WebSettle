@@ -117,6 +117,17 @@ def _init_events_tables():
         content    TEXT NOT NULL,
         created_at TEXT DEFAULT (datetime('now','localtime'))
     );
+    CREATE TABLE IF NOT EXISTS portal_inquiries (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        type        TEXT NOT NULL,          -- 'pw_reset' | 'account' | 'etc'
+        name        TEXT NOT NULL,
+        phone       TEXT NOT NULL,
+        branch      TEXT DEFAULT '',
+        message     TEXT DEFAULT '',
+        status      TEXT DEFAULT 'open',    -- 'open' | 'done'
+        created_at  TEXT DEFAULT (datetime('now','localtime')),
+        resolved_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS instructors (
         id           INTEGER PRIMARY KEY AUTOINCREMENT,
         branch       TEXT NOT NULL,
@@ -389,6 +400,38 @@ async def api_login(body: LoginBody):
         }
 
     raise HTTPException(status_code=400, detail="role은 'staff' 또는 'member'여야 합니다")
+
+
+class InquiryBody(BaseModel):
+    type:    str = "etc"   # 'pw_reset' | 'account' | 'etc'
+    name:    str
+    phone:   str
+    branch:  str = ""
+    message: str = ""
+
+
+@app.post("/api/auth/inquiry")
+async def api_inquiry(body: InquiryBody):
+    """비로그인 문의 접수 (비밀번호 초기화 요청 / 계정 문의) → ERP에서 확인"""
+    name  = body.name.strip()
+    phone = re.sub(r"[^0-9]", "", body.phone.strip())
+    if not name or len(phone) < 8:
+        raise HTTPException(status_code=400, detail="이름과 올바른 전화번호를 입력하세요")
+    # 도배 방지: 같은 전화번호로 미처리 문의 3건 이상이면 차단
+    conn = get_conn()
+    cnt = conn.execute(
+        "SELECT COUNT(*) FROM portal_inquiries WHERE phone=? AND status='open'", (phone,)
+    ).fetchone()[0]
+    if cnt >= 3:
+        conn.close()
+        raise HTTPException(status_code=429, detail="이미 접수된 문의가 있습니다. 관리자 확인을 기다려 주세요.")
+    conn.execute(
+        "INSERT INTO portal_inquiries (type, name, phone, branch, message) VALUES (?,?,?,?,?)",
+        (body.type, name, phone, body.branch.strip(), body.message.strip()[:500])
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True, "msg": "접수되었습니다. 관리자 확인 후 연락드립니다."}
 
 
 @app.post("/api/auth/logout")

@@ -1023,6 +1023,43 @@ def _render_branch_reports():
     )
     st.divider()
 
+    # ── 포털 문의 / 비밀번호 초기화 요청 ──────────────────────
+    sec("포털 문의 · 비밀번호 초기화 요청")
+    try:
+        inq_rows = conn.execute(
+            "SELECT id, type, name, phone, branch, message, created_at "
+            "FROM portal_inquiries WHERE status='open' ORDER BY created_at DESC"
+        ).fetchall()
+        if not inq_rows:
+            st.caption("📭 처리 대기 중인 문의가 없습니다.")
+        else:
+            st.markdown(
+                f'<div class="al al-warn">⚠️&nbsp; 처리 대기 문의 <b>{len(inq_rows)}건</b> — '
+                '비밀번호 초기화는 <b>인사/급여 → 직원 마스터 → 직원 계정 관리</b>에서 '
+                'PW초기화 버튼으로 처리하세요.</div>',
+                unsafe_allow_html=True,
+            )
+            _type_lbl = {"pw_reset": "🔑 비밀번호 초기화", "account": "📨 계정 문의", "etc": "💬 기타"}
+            for iq in inq_rows:
+                iq_id, iq_type, iq_name, iq_phone, iq_branch, iq_msg, iq_at = iq
+                ic1, ic2 = st.columns([5, 1])
+                ic1.markdown(
+                    f"**{_type_lbl.get(iq_type, iq_type)}** · {iq_name} ({iq_phone}) "
+                    f"· {iq_branch or '지점 미입력'}  \n"
+                    f"<span style='font-size:12px;color:var(--ink3)'>{iq_msg or '—'} · {iq_at}</span>",
+                    unsafe_allow_html=True,
+                )
+                if ic2.button("✅ 처리완료", key=f"inq_done_{iq_id}", use_container_width=True):
+                    conn.execute(
+                        "UPDATE portal_inquiries SET status='done', "
+                        "resolved_at=datetime('now','localtime') WHERE id=?", (iq_id,)
+                    )
+                    conn.commit()
+                    st.rerun()
+    except Exception:
+        st.caption("포털 문의 테이블이 아직 없습니다. 포털 서버 재시작 후 생성됩니다.")
+    st.divider()
+
     sec("랜딩페이지 연동 보고")
     st.caption("지점 포털에서 직원이 제출한 AS·비품 요청과 오늘 출퇴근 현황을 실시간으로 확인합니다.")
 

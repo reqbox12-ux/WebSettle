@@ -305,9 +305,9 @@ def render_page():
 
     # ── 4대보험 고지내역 ──────────────────────────────────────
     with tab4:
-        st.subheader("4대보험 고지내역 업로드")
-        from domains.payroll.insurance.ui import _render_upload as _ins_upload
-        _ins_upload()
+        st.subheader("4대보험 고지내역")
+        from domains.payroll.insurance.ui import render as _ins_render
+        _ins_render()
 
     # ── 백업 / 복원 ───────────────────────────────────────────
     with tab5:
