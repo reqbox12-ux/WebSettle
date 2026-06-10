@@ -272,6 +272,12 @@
         localStorage.setItem('raon_role', data.role);
         localStorage.setItem('raon_name', data.name);
         localStorage.setItem('raon_branch', data.branch || '');
+
+        // 첫 로그인 시 비밀번호 변경 강제
+        if (data.must_change_pw) {
+          showChangePw(password, keepLogin);
+          return;
+        }
         window.location.href = '/home';
       } catch (err) {
         showError('네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
@@ -279,6 +285,69 @@
         btn.disabled = false;
         btn.innerHTML = '로그인 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
       }
+    }
+
+    // ── 첫 로그인 비밀번호 변경 강제 ─────────────────────────
+    function showChangePw(currentPw, keepLogin) {
+      const card = document.querySelector('.login-card') || document.body;
+      const form = document.getElementById('loginForm');
+      if (form) form.style.display = 'none';
+      const signup = document.querySelector('.signup-row');
+      if (signup) signup.style.display = 'none';
+
+      const box = document.createElement('div');
+      box.id = 'pwChangeBox';
+      box.innerHTML = `
+        <div style="margin:10px 0 16px;padding:12px 14px;border-radius:10px;
+             background:rgba(230,0,40,.08);border:1px solid rgba(230,0,40,.25);
+             font-size:13px;line-height:1.5">
+          🔐 <b>첫 로그인입니다.</b> 보안을 위해 비밀번호를 변경해야 합니다.<br>
+          <span style="font-size:12px;opacity:.8">최소 8자 · 대문자 + 소문자 + 숫자 포함</span>
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <input type="password" id="newPw1" placeholder="새 비밀번호"
+                 style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+        </div>
+        <div class="field" style="margin-bottom:6px">
+          <input type="password" id="newPw2" placeholder="새 비밀번호 확인"
+                 style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+        </div>
+        <div id="pwErr" style="color:#E60028;font-size:12.5px;min-height:18px;margin-bottom:8px"></div>
+        <button id="pwSubmit" style="width:100%;padding:14px;border:none;border-radius:10px;
+                background:#E60028;color:#fff;font-size:15px;font-weight:700;cursor:pointer">
+          비밀번호 변경하고 시작하기
+        </button>`;
+      (form ? form.parentNode : card).insertBefore(box, form);
+
+      document.getElementById('pwSubmit').addEventListener('click', async () => {
+        const p1 = document.getElementById('newPw1').value;
+        const p2 = document.getElementById('newPw2').value;
+        const errEl = document.getElementById('pwErr');
+        errEl.textContent = '';
+
+        if (p1 !== p2) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
+        if (p1.length < 8) { errEl.textContent = '최소 8자 이상이어야 합니다.'; return; }
+        if (!/[A-Z]/.test(p1)) { errEl.textContent = '대문자를 1자 이상 포함해야 합니다.'; return; }
+        if (!/[a-z]/.test(p1)) { errEl.textContent = '소문자를 1자 이상 포함해야 합니다.'; return; }
+        if (!/[0-9]/.test(p1)) { errEl.textContent = '숫자를 1자 이상 포함해야 합니다.'; return; }
+
+        const token = localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token');
+        try {
+          const resp = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ current_password: currentPw, new_password: p1 })
+          });
+          const data = await resp.json();
+          if (!resp.ok) { errEl.textContent = data.detail || '변경에 실패했습니다.'; return; }
+          // 새 토큰으로 교체 후 입장
+          if (keepLogin) localStorage.setItem('raon_token', data.token);
+          else sessionStorage.setItem('raon_token', data.token);
+          window.location.href = '/home';
+        } catch (e) {
+          errEl.textContent = '네트워크 오류가 발생했습니다.';
+        }
+      });
     }
 
     function toggleTheme() {

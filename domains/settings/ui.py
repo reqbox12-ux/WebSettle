@@ -113,12 +113,12 @@ def render_page(auth_user: dict = None):
         bank_sel = st.selectbox("통장 필터", ["전체", "hana", "신한(shinhan)"], key="rl_bank")
         bank_code_f = None if bank_sel == "전체" else ("shinhan" if "신한" in bank_sel else "hana")
 
-        rules = get_keyword_rules(bank_code_f)
-        if not rules:
+        rules_df = get_keyword_rules(bank_code_f)
+        if rules_df is None or len(rules_df) == 0:
             st.info("등록된 규칙이 없습니다.")
         else:
-            for r in rules:
-                rid  = r["id"]
+            for _, r in rules_df.iterrows():
+                rid  = int(r["id"])
                 cols = st.columns([2, 2, 2, 1, 1])
                 cols[0].markdown(f"`{r['keyword']}`")
                 edit_br  = cols[1].selectbox("지점", [""] + BRANCH_LIST,

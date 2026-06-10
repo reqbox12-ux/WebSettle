@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -46,7 +48,26 @@ from domains.payroll.db import (
 from shared.db import get_conn
 
 # ── JWT Config ─────────────────────────────────────────────────────────────────
-SECRET_KEY = "RAON_BRANCH_SECRET_2026"
+def _load_secret_key() -> str:
+    """data/settings.json에서 시크릿 키 로드 (없으면 자동 생성) — 하드코딩 제거"""
+    import json as _json
+    import secrets as _secrets
+    sp = Path(__file__).parent / "data" / "settings.json"
+    data: dict = {}
+    if sp.exists():
+        try:
+            with open(sp, encoding="utf-8") as f:
+                data = _json.load(f)
+        except Exception:
+            pass
+    if "portal_secret_key" not in data:
+        data["portal_secret_key"] = _secrets.token_hex(32)
+        sp.parent.mkdir(exist_ok=True)
+        with open(sp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, ensure_ascii=False, indent=2)
+    return data["portal_secret_key"]
+
+SECRET_KEY = _load_secret_key()
 ALGORITHM  = "HS256"
 TOKEN_EXPIRE_HOURS = 8
 
@@ -181,6 +202,47 @@ def require_staff(request: Request) -> dict:
     return user
 
 
+def _scope_branch(user: dict, requested: str = "") -> str:
+    """지점 접근 제한: 일반 직원은 자기 지점만, ERP 관리자(admin)는 요청 지점 그대로."""
+    if user.get("admin"):
+        return requested
+    return user.get("branch", "") or requested
+
+
+# ── 로그인 시도 제한 (brute-force 방어) ─────────────────────────────────────────
+_login_attempts: dict = {}   # {identifier: [timestamp, ...]}
+_LOCKOUT_MAX    = 5          # 10분 내 5회 실패 시 잠금
+_LOCKOUT_WINDOW = 600
+
+def _check_rate_limit(identifier: str):
+    now = time.time()
+    attempts = [t for t in _login_attempts.get(identifier, []) if now - t < _LOCKOUT_WINDOW]
+    _login_attempts[identifier] = attempts
+    if len(attempts) >= _LOCKOUT_MAX:
+        raise HTTPException(status_code=429,
+                            detail="로그인 시도가 너무 많습니다. 10분 후 다시 시도하세요.")
+
+def _record_fail(identifier: str):
+    _login_attempts.setdefault(identifier, []).append(time.time())
+
+def _clear_fails(identifier: str):
+    _login_attempts.pop(identifier, None)
+
+
+# ── 비밀번호 정책 ────────────────────────────────────────────────────────────────
+def _validate_pw_policy(pw: str) -> str | None:
+    """정책 위반 시 오류 메시지, 통과 시 None"""
+    if len(pw) < 8:
+        return "비밀번호는 최소 8자 이상이어야 합니다."
+    if not re.search(r"[A-Z]", pw):
+        return "대문자를 1자 이상 포함해야 합니다."
+    if not re.search(r"[a-z]", pw):
+        return "소문자를 1자 이상 포함해야 합니다."
+    if not re.search(r"[0-9]", pw):
+        return "숫자를 1자 이상 포함해야 합니다."
+    return None
+
+
 def save_upload(file: UploadFile) -> str:
     """Save uploaded file to static/uploads/ and return URL path."""
     ext  = Path(file.filename).suffix if file.filename else ""
@@ -248,11 +310,38 @@ class LoginBody(BaseModel):
 
 @app.post("/api/auth/login")
 async def api_login(body: LoginBody):
+    identifier = body.identifier.strip()
+    _check_rate_limit(identifier)
+
     if body.role == "staff":
-        # Use existing verify_employee_login from payroll domain (sha256-based)
-        emp = verify_employee_login(body.identifier, body.password)
+        # 1) ERP 관리자 계정 (admin) — 전 지점 접근 가능
+        try:
+            from modules.auth import verify_login as _erp_verify
+            erp_user = _erp_verify(identifier, body.password)
+        except Exception:
+            erp_user = None
+        if erp_user and erp_user.get("role") == "admin":
+            _clear_fails(identifier)
+            token = create_token({
+                "sub":    "0",
+                "role":   "staff",
+                "admin":  True,
+                "name":   erp_user["name"],
+                "branch": "",
+                "must_change_pw": False,
+            })
+            return {
+                "token": token, "role": "staff", "admin": True,
+                "name": erp_user["name"], "branch": "",
+                "must_change_pw": False,
+            }
+
+        # 2) 일반 직원 계정
+        emp = verify_employee_login(identifier, body.password)
         if not emp:
+            _record_fail(identifier)
             raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다")
+        _clear_fails(identifier)
         token = create_token({
             "sub":           str(emp["employee_id"]),
             "role":          "staff",
@@ -271,18 +360,20 @@ async def api_login(body: LoginBody):
     elif body.role == "member":
         conn = get_conn()
         # Match by phone (last 4 = PIN) or email
-        identifier = body.identifier.strip()
         member = _one(conn.execute(
             "SELECT * FROM members WHERE (phone=? OR email=?) AND status='active' LIMIT 1",
             (identifier, identifier)
         ))
         conn.close()
         if not member:
+            _record_fail(identifier)
             raise HTTPException(status_code=401, detail="회원 정보를 찾을 수 없습니다")
         # PIN check: stored as last 4 digits of phone, or pin column
         pin = str(member.get("pin", ""))
-        if not pin or not verify_password(body.password, pin) and body.password != pin:
+        if not pin or (not verify_password(body.password, pin) and body.password != pin):
+            _record_fail(identifier)
             raise HTTPException(status_code=401, detail="비밀번호(PIN)가 올바르지 않습니다")
+        _clear_fails(identifier)
         token = create_token({
             "sub":    str(member["id"]),
             "role":   "member",
@@ -315,7 +406,53 @@ async def api_me(request: Request):
         "role":   user.get("role"),
         "name":   user.get("name"),
         "branch": user.get("branch"),
+        "admin":  bool(user.get("admin")),
+        "must_change_pw": bool(user.get("must_change_pw")),
     }
+
+
+class ChangePwBody(BaseModel):
+    current_password: str
+    new_password:     str
+
+
+@app.post("/api/auth/change-password")
+async def api_change_password(request: Request, body: ChangePwBody):
+    """직원 비밀번호 변경 — 정책: 최소 8자, 대문자+소문자+숫자 포함"""
+    user = require_staff(request)
+    if user.get("admin"):
+        raise HTTPException(status_code=400, detail="관리자 비밀번호는 ERP에서 변경하세요")
+
+    # 정책 검증
+    err = _validate_pw_policy(body.new_password)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+
+    # 현재 비밀번호 확인
+    from domains.payroll.db import update_employee_password
+    emp_id = int(user["sub"])
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT username FROM employee_accounts WHERE employee_id=?", (emp_id,)
+    ).fetchone()
+    conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
+    if not verify_employee_login(row[0], body.current_password):
+        raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다")
+
+    if not update_employee_password(emp_id, body.new_password):
+        raise HTTPException(status_code=500, detail="비밀번호 변경에 실패했습니다")
+
+    # 새 토큰 발급 (must_change_pw 해제)
+    token = create_token({
+        "sub":    user["sub"],
+        "role":   "staff",
+        "name":   user.get("name", ""),
+        "branch": user.get("branch", ""),
+        "must_change_pw": False,
+    })
+    return {"ok": True, "token": token}
 
 
 # ── Home API ───────────────────────────────────────────────────────────────────
@@ -517,8 +654,8 @@ async def api_attendance_class_schedule(request: Request, year: int = None, mont
 # ── Operations: Inventory ──────────────────────────────────────────────────────
 @app.get("/api/operations/inventory")
 async def api_inventory_get(request: Request, branch: str = ""):
-    require_staff(request)
-    return get_inventory(branch)
+    user = require_staff(request)
+    return get_inventory(_scope_branch(user, branch))
 
 
 class InventoryItem(BaseModel):
@@ -554,8 +691,8 @@ async def api_inventory_adjust(request: Request, item_id: int, body: AdjustBody)
 # ── Operations: Supply Requests ────────────────────────────────────────────────
 @app.get("/api/operations/supply")
 async def api_supply_get(request: Request, branch: str = ""):
-    require_staff(request)
-    return get_supply_requests(branch)
+    user = require_staff(request)
+    return get_supply_requests(_scope_branch(user, branch))
 
 
 class SupplyBody(BaseModel):
@@ -593,8 +730,8 @@ async def api_supply_patch(request: Request, req_id: int, body: SupplyPatchBody)
 # ── Operations: A/S ───────────────────────────────────────────────────────────
 @app.get("/api/operations/as")
 async def api_as_get(request: Request, branch: str = ""):
-    require_staff(request)
-    return get_as_requests(branch)
+    user = require_staff(request)
+    return get_as_requests(_scope_branch(user, branch))
 
 
 class AsBody(BaseModel):
@@ -630,11 +767,11 @@ async def api_as_patch(request: Request, req_id: int, body: AsPatchBody):
 # ── Operations: Events ────────────────────────────────────────────────────────
 @app.get("/api/operations/events")
 async def api_events_get(request: Request, branch: str = ""):
-    require_auth(request)
+    user = require_auth(request)
     conn = get_conn()
     cur  = conn.execute(
         "SELECT * FROM events WHERE (branch=? OR branch='all') ORDER BY created_at DESC",
-        (branch,)
+        (_scope_branch(user, branch),)
     )
     rows = _rows(cur)
     conn.close()
@@ -723,8 +860,8 @@ async def api_events_comment(request: Request, event_id: int, body: CommentBody)
 # ── Operations: Announcements ─────────────────────────────────────────────────
 @app.get("/api/operations/announcements")
 async def api_announcements_get(request: Request, branch: str = ""):
-    require_auth(request)
-    return get_announcements(branch)
+    user = require_auth(request)
+    return get_announcements(_scope_branch(user, branch))
 
 
 class AnnouncementBody(BaseModel):
@@ -748,11 +885,11 @@ async def api_announcements_create(request: Request, body: AnnouncementBody):
 # ── Operations: Instructors ───────────────────────────────────────────────────
 @app.get("/api/operations/instructors")
 async def api_instructors_get(request: Request, branch: str = ""):
-    require_auth(request)
+    user = require_auth(request)
     conn = get_conn()
     cur  = conn.execute(
         "SELECT * FROM instructors WHERE branch=? AND is_active=1 ORDER BY name",
-        (branch,)
+        (_scope_branch(user, branch),)
     )
     rows = _rows(cur)
     conn.close()
@@ -818,8 +955,8 @@ async def api_instructors_patch(request: Request, instructor_id: int, body: Inst
 # ── Members API ────────────────────────────────────────────────────────────────
 @app.get("/api/members")
 async def api_members_list(request: Request, branch: str = "", q: str = "", status: str = ""):
-    require_staff(request)
-    return get_members(branch, status or None, q)
+    user = require_staff(request)
+    return get_members(_scope_branch(user, branch), status or None, q)
 
 
 class MemberBody(BaseModel):
@@ -902,8 +1039,8 @@ async def api_member_memberships_create(request: Request, member_id: int, body: 
 # ── Classes API ────────────────────────────────────────────────────────────────
 @app.get("/api/classes")
 async def api_classes_get(request: Request, branch: str = ""):
-    require_auth(request)
-    return get_class_schedules(branch)
+    user = require_auth(request)
+    return get_class_schedules(_scope_branch(user, branch))
 
 
 class ClassBody(BaseModel):

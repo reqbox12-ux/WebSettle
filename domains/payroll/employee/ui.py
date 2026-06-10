@@ -265,36 +265,44 @@ def render():
                     "note":           emp_note.strip(),
                 }
                 eid = upsert_employee(data)
+                # 전화번호가 있으면 포털 계정 자동 생성 (아이디=전화번호, 초기PW=뒷4자리)
+                _phone_n = emp_phone.strip().replace("-", "").replace(" ", "")
+                if len(_phone_n) >= 8 and not get_employee_account(eid):
+                    ok_acc, _ = create_employee_account(eid, _phone_n, _phone_n[-4:])
+                    if ok_acc:
+                        st.info(f"🔑 포털 계정 자동 생성 — 아이디: {_phone_n} / 초기PW: {_phone_n[-4:]} (첫 로그인 시 변경 필수)")
                 st.success(f"✅ 저장 완료 (ID: {eid})")
                 st.rerun()
 
     # ── 직원 계정 관리 ────────────────────────────────────────
     with tab_account:
         sec("직원 계정 관리")
-        st.caption("직원들이 **랜딩페이지(포트 8502)**에 로그인할 계정을 관리합니다. "
-                   "아이디=이메일, 초기 비밀번호=전화번호 뒷 4자리")
+        st.caption("직원들이 **지점 포털**에 로그인할 계정을 관리합니다. "
+                   "**아이디=전화번호**, 초기 비밀번호=전화번호 뒷 4자리 "
+                   "(첫 로그인 시 비밀번호 변경 강제: 8자 이상, 대문자+소문자+숫자)")
 
         all_emps_acc  = get_all_employees()
         staff_emps    = [e for e in all_emps_acc if e["emp_type"] in ("insured", "freelance")]
         existing_accs = {a["employee_id"]: a for a in get_all_employee_accounts()}
 
-        # 일괄 생성
-        eligible   = [e for e in staff_emps
-                      if e.get("email", "").strip() and len(e.get("phone", "").replace("-","").replace(" ","")) >= 4]
-        no_info    = [e for e in staff_emps
-                      if not (e.get("email", "").strip() and len(e.get("phone", "").replace("-","").replace(" ","")) >= 4)]
+        def _phone_clean(e):
+            return e.get("phone", "").replace("-", "").replace(" ", "")
+
+        # 일괄 생성 — 전화번호만 있으면 가능
+        eligible = [e for e in staff_emps if len(_phone_clean(e)) >= 8]
+        no_info  = [e for e in staff_emps if len(_phone_clean(e)) < 8]
 
         col_aa, col_ab = st.columns([3, 1])
         with col_aa:
             if no_info:
-                st.warning(f"⚠️ 이메일 또는 전화번호 미등록: **{len(no_info)}명** "
+                st.warning(f"⚠️ 전화번호 미등록: **{len(no_info)}명** "
                            f"— 직원 추가/수정 탭에서 먼저 입력하세요.")
         with col_ab:
             if st.button(f"✨ 계정 일괄 생성 ({len(eligible)}명)", type="primary", key="bulk_create_acc"):
                 created = skipped = 0
                 for emp in eligible:
-                    last4 = emp["phone"].replace("-", "").replace(" ", "")[-4:]
-                    ok, _ = create_employee_account(emp["id"], emp["email"].strip(), last4)
+                    phone = _phone_clean(emp)
+                    ok, _ = create_employee_account(emp["id"], phone, phone[-4:])
                     if ok:
                         created += 1
                     else:
@@ -314,8 +322,8 @@ def render():
                 "이름": emp["name"],
                 "지점": emp["branch"],
                 "유형": EMP_TYPE_SHORT.get(emp["emp_type"], emp["emp_type"]),
-                "이메일(ID)": emp.get("email", "") or "—",
-                "전화번호": emp.get("phone", "") or "—",
+                "아이디(전화번호)": emp.get("phone", "").replace("-", "").replace(" ", "") or "—",
+                "이메일": emp.get("email", "") or "—",
                 "계정": "✅" if acc else "❌",
                 "마지막로그인": (acc["last_login"][:16] if acc and acc.get("last_login") else "—"),
                 "PW변경필요": ("⚠️ 미변경" if acc and acc.get("must_change_pw") else ("✅" if acc else "—")),
@@ -337,17 +345,18 @@ def render():
             emp_found = next((e for e in all_emps_acc if e["id"] == target_id), None)
             if not emp_found:
                 st.error("해당 ID의 직원이 없습니다.")
-            elif not emp_found.get("email", "").strip():
-                st.error("이메일을 먼저 등록하세요.")
             else:
                 phone_raw = emp_found.get("phone", "").replace("-", "").replace(" ", "")
-                pw = custom_pw.strip() if custom_pw.strip() else (phone_raw[-4:] if len(phone_raw) >= 4 else "0000")
-                ok, msg = create_employee_account(emp_found["id"], emp_found["email"].strip(), pw)
-                if ok:
-                    st.success(f"✅ {emp_found['name']} 계정 생성 완료 — 아이디: {emp_found['email']} / 초기PW: {pw}")
+                if len(phone_raw) < 8:
+                    st.error("전화번호를 먼저 등록하세요.")
                 else:
-                    st.error(f"실패: {msg}")
-                st.rerun()
+                    pw = custom_pw.strip() if custom_pw.strip() else phone_raw[-4:]
+                    ok, msg = create_employee_account(emp_found["id"], phone_raw, pw)
+                    if ok:
+                        st.success(f"✅ {emp_found['name']} 계정 생성 완료 — 아이디: {phone_raw} / 초기PW: {pw}")
+                    else:
+                        st.error(f"실패: {msg}")
+                    st.rerun()
 
         if col_btn2.button("PW초기화", key="reset_pw_btn"):
             emp_found = next((e for e in all_emps_acc if e["id"] == target_id), None)

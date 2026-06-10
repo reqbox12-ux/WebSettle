@@ -996,8 +996,35 @@ def _render_branch_reports():
     today = date.today().isoformat()
     conn  = get_conn()
 
+    # ── 지점 포털 바로가기 ────────────────────────────────────
+    sec("지점 포털 바로가기")
+    st.markdown(
+        '<div class="al al-info">🔗&nbsp; 최고관리자(admin) 계정으로 지점 포털에 로그인하면 '
+        '<b>전체 지점</b>의 데이터를 조회·관리할 수 있습니다. '
+        '일반 직원은 자기 지점만 접근 가능합니다.</div>',
+        unsafe_allow_html=True,
+    )
+    pc1, pc2 = st.columns(2)
+    pc1.markdown(
+        '<a href="https://attend.laonfitness.com/login" target="_blank" '
+        'style="display:block;text-align:center;background:#E60028;color:#fff;'
+        'border-radius:10px;font-weight:700;font-size:14px;padding:14px;'
+        'text-decoration:none;box-shadow:0 2px 6px rgba(230,0,40,.3)">'
+        '🌐 지점 포털 접속 (attend.laonfitness.com)</a>',
+        unsafe_allow_html=True,
+    )
+    pc2.markdown(
+        '<a href="http://192.168.0.237:8502/login" target="_blank" '
+        'style="display:block;text-align:center;background:var(--sf2);color:var(--ink);'
+        'border:1px solid var(--bd);border-radius:10px;font-weight:700;font-size:14px;'
+        'padding:14px;text-decoration:none">'
+        '🏠 내부망 접속 (192.168.0.237:8502)</a>',
+        unsafe_allow_html=True,
+    )
+    st.divider()
+
     sec("랜딩페이지 연동 보고")
-    st.caption("지점 포털(포트 8502)에서 직원이 제출한 AS·비품 요청과 오늘 출퇴근 현황을 실시간으로 확인합니다.")
+    st.caption("지점 포털에서 직원이 제출한 AS·비품 요청과 오늘 출퇴근 현황을 실시간으로 확인합니다.")
 
     col1, col2, col3 = st.columns(3)
 
