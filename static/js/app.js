@@ -46,7 +46,7 @@
     attendance:  { label: '근태',    icon: 'clock',      staffOnly: true  },
     operations:  { label: '운영관리', icon: 'settings',   staffOnly: true  },
     members:     { label: '회원',    icon: 'users',      staffOnly: true  },
-    classes:     { label: '수업',    icon: 'calendar',   staffOnly: false },
+    classes:     { label: '상품',    icon: 'package',    staffOnly: false },
     instructors: { label: '강사',    icon: 'user-check', staffOnly: false },
   };
 
@@ -409,22 +409,6 @@
     if (user.role !== 'staff') {
       container.innerHTML = '<div class="page"><div class="empty">직원 전용 메뉴입니다</div></div>'; return;
     }
-    // PC 접속 차단
-    if (!isMobile()) {
-      container.innerHTML = `
-        <div class="page">
-          <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-                      padding:60px 24px;text-align:center;gap:16px">
-            <div style="font-size:56px">📱</div>
-            <div style="font-size:20px;font-weight:700;color:#1a1a1a">모바일에서 접속해 주세요</div>
-            <div style="font-size:14px;color:#666;line-height:1.7;max-width:320px">
-              출퇴근 기록은 GPS 위치 확인이 필요합니다.<br>
-              휴대폰으로 접속하여 출퇴근 버튼을 눌러주세요.
-            </div>
-          </div>
-        </div>`;
-      return;
-    }
     container.innerHTML = '<div class="page"><div class="empty">근태 로딩 중…</div></div>';
     try {
       const today  = new Date().toISOString().slice(0, 10);
@@ -516,9 +500,14 @@
     }
   }
 
-  async function loadMonthlyAttendance() {
+  let _attCalYear = null, _attCalMonth = null;
+
+  async function loadMonthlyAttendance(yr, mo) {
     const now  = new Date();
-    const yr   = now.getFullYear(), mo = now.getMonth() + 1;
+    if (!yr) { yr = _attCalYear || now.getFullYear(); }
+    if (!mo) { mo = _attCalMonth || now.getMonth() + 1; }
+    _attCalYear = yr; _attCalMonth = mo;
+
     const [r1, r2] = await Promise.all([
       api(`/api/attendance/monthly?year=${yr}&month=${mo}`),
       api(`/api/attendance/pay?year=${yr}&month=${mo}`),
@@ -527,40 +516,106 @@
     const payData  = r2 ? await r2.json() : { records: [], total: 0 };
     const payMap   = {};
     (payData.records || []).forEach(p => { payMap[p.work_date] = p; });
+    const recMap   = {};
+    records.forEach(r => { recMap[r.work_date] = r; });
     const el = document.getElementById('monthlyAttendance');
     if (!el) return;
 
-    if (!records.length) { el.innerHTML = '<div class="empty">이번 달 근태 기록이 없습니다</div>'; return; }
+    // ── 요약 통계 ──────────────────────────────────────────
+    const workDays  = records.filter(r => r.clock_in).length;
+    const totalMin  = records.reduce((s, r) => s + (r.work_minutes || 0), 0);
+    const totalPay  = payData.total || 0;
+    const tH = Math.floor(totalMin / 60), tM = totalMin % 60;
 
-    const totalPay = payData.total || 0;
-    const payBanner = totalPay > 0
-      ? `<div style="background:#f0fdf4;border:1px solid #86efac;border-radius:8px;padding:10px 14px;
-                     margin-bottom:12px;font-size:14px;font-weight:600;color:#16a34a;">
-           💰 이번달 예상 급여: ${totalPay.toLocaleString()}원
-         </div>` : '';
+    // ── 달력 그리드 (월요일 시작) ──────────────────────────
+    const firstDay  = new Date(yr, mo - 1, 1);
+    const lastDate  = new Date(yr, mo, 0).getDate();
+    let startOffset = firstDay.getDay() - 1;       // Mon=0
+    if (startOffset < 0) startOffset = 6;
 
-    el.innerHTML = payBanner + `
-      <table class="table">
-        <thead><tr><th>날짜</th><th>출근</th><th>퇴근</th><th>근무</th><th>상태</th><th>급여</th></tr></thead>
-        <tbody>
-          ${records.map(r => {
-            const m  = r.work_minutes || 0;
-            const h  = Math.floor(m/60), rm = m%60;
-            const p  = payMap[r.work_date];
-            const payStr = p ? p.total_pay.toLocaleString() + '원' + (p.is_weekend || p.is_holiday ? ' 🏖' : '') : '—';
-            const statusTxt = r.status === 'late' ? '⚠️ 지각' : (r.clock_in ? '✅' : '—');
-            return `<tr>
-              <td>${r.work_date}</td>
-              <td>${r.clock_in || '—'}</td>
-              <td>${r.clock_out || '—'}</td>
-              <td>${m ? h+'h '+rm+'m' : '—'}</td>
-              <td>${statusTxt}</td>
-              <td style="color:#16a34a;font-weight:600">${payStr}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>`;
+    const todayStr  = now.toISOString().slice(0, 10);
+    const dayNames  = ['월', '화', '수', '목', '금', '토', '일'];
+
+    let cells = '';
+    for (let i = 0; i < startOffset; i++) cells += '<div class="att-cal-cell empty"></div>';
+    for (let d = 1; d <= lastDate; d++) {
+      const ds  = `${yr}-${String(mo).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+      const r   = recMap[ds];
+      const p   = payMap[ds];
+      const dow = (startOffset + d - 1) % 7;       // 0=월 … 5=토 6=일
+      const isToday = ds === todayStr;
+
+      let inner = '', cellCls = '';
+      if (r && r.clock_in) {
+        cellCls = 'worked';
+        const m  = r.work_minutes || 0;
+        const hh = Math.floor(m / 60), mm = m % 60;
+        const late = r.status === 'late' ? '<span class="att-late">지각</span>' : '';
+        inner = `
+          <div class="att-time">${r.clock_in}${r.clock_out ? '~' + r.clock_out : ''}</div>
+          ${m ? `<div class="att-hours">${hh}h${mm ? ' ' + mm + 'm' : ''}</div>` : ''}
+          ${p ? `<div class="att-pay">${(p.total_pay/10000).toFixed(p.total_pay%10000?1:0)}만</div>` : ''}
+          ${late}`;
+      }
+      cells += `
+        <div class="att-cal-cell ${cellCls} ${isToday ? 'today' : ''}">
+          <div class="att-day ${dow === 5 ? 'sat' : ''} ${dow === 6 ? 'sun' : ''}">${d}</div>
+          ${inner}
+        </div>`;
+    }
+
+    el.innerHTML = `
+      <style>
+        .att-summary{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:14px 0}
+        .att-stat{background:var(--sf2,#f7f4f1);border-radius:12px;padding:12px 14px;text-align:center}
+        .att-stat .lb{font-size:11px;color:#999;font-weight:600;margin-bottom:4px}
+        .att-stat .vl{font-size:17px;font-weight:800;letter-spacing:-.02em}
+        .att-stat .vl.pay{color:#16a34a}
+        .att-cal-nav{display:flex;align-items:center;justify-content:center;gap:14px;margin:6px 0 12px}
+        .att-cal-nav button{border:1px solid rgba(128,128,128,.25);background:transparent;color:inherit;
+          border-radius:8px;width:32px;height:32px;font-size:15px;cursor:pointer}
+        .att-cal-nav .ym{font-size:15px;font-weight:800}
+        .att-cal-head{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:4px}
+        .att-cal-head div{text-align:center;font-size:11px;font-weight:700;color:#999;padding:4px 0}
+        .att-cal-head div:nth-child(6){color:#3b82f6}
+        .att-cal-head div:nth-child(7){color:#e60028}
+        .att-cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+        .att-cal-cell{min-height:64px;border-radius:10px;padding:5px 6px;background:var(--sf2,#f7f4f1);
+          display:flex;flex-direction:column;gap:1px;position:relative;overflow:hidden}
+        .att-cal-cell.empty{background:transparent}
+        .att-cal-cell.worked{background:#eef6ff;border:1px solid #bfdbfe}
+        .att-cal-cell.today{outline:2px solid #e60028;outline-offset:-2px}
+        .att-day{font-size:11.5px;font-weight:700}
+        .att-day.sat{color:#3b82f6}.att-day.sun{color:#e60028}
+        .att-time{font-size:9.5px;color:#3b6bb3;font-weight:600;line-height:1.2;word-break:keep-all}
+        .att-hours{font-size:10px;font-weight:700;color:#1d4ed8}
+        .att-pay{font-size:10.5px;font-weight:800;color:#16a34a}
+        .att-late{position:absolute;top:4px;right:5px;font-size:8.5px;color:#d97706;font-weight:700}
+        @media(prefers-color-scheme:dark){
+          .att-cal-cell.worked{background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.3)}
+        }
+        @media(max-width:520px){.att-cal-cell{min-height:56px;padding:4px}}
+      </style>
+      <div class="att-summary">
+        <div class="att-stat"><div class="lb">출근일 수</div><div class="vl">${workDays}일</div></div>
+        <div class="att-stat"><div class="lb">누적 근무</div><div class="vl">${tH}시간${tM ? ' ' + tM + '분' : ''}</div></div>
+        <div class="att-stat"><div class="lb">누적 급여</div><div class="vl pay">${totalPay > 0 ? totalPay.toLocaleString() + '원' : '—'}</div></div>
+      </div>
+      <div class="att-cal-nav">
+        <button onclick="attCalMove(-1)">‹</button>
+        <span class="ym">${yr}년 ${mo}월</span>
+        <button onclick="attCalMove(1)">›</button>
+      </div>
+      <div class="att-cal-head">${dayNames.map(d => `<div>${d}</div>`).join('')}</div>
+      <div class="att-cal">${cells}</div>`;
   }
+
+  window.attCalMove = function (delta) {
+    let y = _attCalYear, m = _attCalMonth + delta;
+    if (m < 1)  { m = 12; y--; }
+    if (m > 12) { m = 1;  y++; }
+    loadMonthlyAttendance(y, m);
+  };
 
   async function _doAttendance(endpoint) {
     const gps  = await getGps();
@@ -1048,35 +1103,116 @@
   };
 
   // ── Classes ───────────────────────────────────────────────────
+  const PROD_CAT = {
+    gx:     { label: 'GX 프로그램', icon: 'activity',     color: '#e60028' },
+    lesson: { label: '레슨 프로그램', icon: 'target',     color: '#3b82f6' },
+    goods:  { label: '상품',        icon: 'shopping-bag', color: '#16a34a' },
+  };
+
   async function renderClasses(container) {
-    container.innerHTML = '<div class="page"><div class="empty">수업 로딩 중…</div></div>';
+    container.innerHTML = '<div class="page"><div class="empty">상품 로딩 중…</div></div>';
     try {
       const branch = user.branch || '';
-      const resp   = await api(`/api/classes?branch=${encodeURIComponent(branch)}`);
-      if (!resp) return;
-      const classes = await resp.json();
-      const addBtn  = user.role === 'staff'
-        ? `<button class="btn primary sm" onclick="modalNewClass()"><i data-lucide="plus"></i> 수업 추가</button>` : '';
+      const [pResp, sResp] = await Promise.all([
+        api(`/api/products?branch=${encodeURIComponent(branch)}`),
+        user.role === 'staff' ? api(`/api/sales?branch=${encodeURIComponent(branch)}`) : Promise.resolve(null),
+      ]);
+      if (!pResp) return;
+      const products = await pResp.json();
+      const sales    = sResp ? await sResp.json() : [];
+
+      const isStaff = user.role === 'staff';
+      const addBtn  = isStaff
+        ? `<button class="btn primary sm" onclick="modalNewProduct()"><i data-lucide="plus"></i> 상품 추가</button>` : '';
+      const payBtn  = isStaff
+        ? `<button class="btn sm" style="background:#16a34a;color:#fff" onclick="modalNewSale()"><i data-lucide="credit-card"></i> 결제 등록</button>` : '';
+
+      const fmtWon = v => (v || 0).toLocaleString() + '원';
+
+      const catSection = (cat) => {
+        const items = products.filter(p => p.category === cat);
+        const cfg   = PROD_CAT[cat];
+        if (!items.length && !isStaff) return '';
+        return `
+          <div style="margin-bottom:28px">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">
+              <i data-lucide="${cfg.icon}" style="width:17px;height:17px;color:${cfg.color}"></i>
+              <span style="font-size:15px;font-weight:800">${cfg.label}</span>
+              <span style="font-size:12px;color:#999">${items.length}개</span>
+            </div>
+            <div class="class-grid">
+              ${items.map(p => {
+                let detail = '';
+                if (cat === 'gx') {
+                  detail = `
+                    <div class="row"><i data-lucide="clock" style="width:13px;height:13px"></i><span>${p.days || '매일'} · ${p.start_time}~${p.end_time}</span></div>
+                    <div class="row"><i data-lucide="user" style="width:13px;height:13px"></i><span>${p.instructor_name || '강사 미배정'}</span></div>
+                    <div class="row"><i data-lucide="users" style="width:13px;height:13px"></i><span>정원 ${p.capacity}명</span></div>`;
+                } else if (cat === 'lesson') {
+                  detail = `
+                    <div class="row"><i data-lucide="target" style="width:13px;height:13px"></i><span>${p.lesson_type}</span></div>
+                    <div class="row"><i data-lucide="repeat" style="width:13px;height:13px"></i><span>${p.sessions}회</span></div>`;
+                }
+                const delBtn = isStaff
+                  ? `<button onclick="deleteProduct(${p.id})" title="삭제"
+                       style="position:absolute;top:8px;right:8px;border:none;background:rgba(0,0,0,.35);
+                       color:#fff;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px">×</button>` : '';
+                return `
+                  <div class="class-card" style="position:relative">
+                    ${delBtn}
+                    <div class="meta">
+                      <div class="title">${p.name}</div>
+                      ${detail}
+                      <div class="row" style="margin-top:6px">
+                        <span style="font-size:15px;font-weight:800;color:${cfg.color}">${fmtWon(p.price)}</span>
+                      </div>
+                    </div>
+                  </div>`;
+              }).join('') || '<div class="empty" style="grid-column:1/-1">등록된 항목이 없습니다</div>'}
+            </div>
+          </div>`;
+      };
+
+      // 최근 결제 내역 (직원만)
+      let salesHtml = '';
+      if (isStaff) {
+        salesHtml = `
+          <div class="card" style="margin-top:8px">
+            <div class="card-head" style="padding:16px 20px 0">
+              <div class="card-title">💳 최근 결제 내역</div>
+            </div>
+            <div style="padding:8px 20px 16px;overflow-x:auto">
+              ${sales.length ? `
+                <table class="table">
+                  <thead><tr><th>일자</th><th>회원</th><th>상품</th><th>분류</th><th>금액</th><th>결제</th><th>관리비</th><th>담당</th></tr></thead>
+                  <tbody>
+                    ${sales.slice(0, 30).map(s => `
+                      <tr>
+                        <td>${s.sale_date || (s.created_at || '').slice(0,10)}</td>
+                        <td>${s.member_name || '—'}</td>
+                        <td>${s.product_name}</td>
+                        <td>${PROD_CAT[s.category]?.label || s.category || '—'}</td>
+                        <td style="font-weight:700">${fmtWon(s.amount)}</td>
+                        <td>${s.pay_method}</td>
+                        <td>${s.is_mgmt_fee ? '✅' : '—'}</td>
+                        <td>${s.sold_by || '—'}</td>
+                      </tr>`).join('')}
+                  </tbody>
+                </table>` : '<div class="empty">결제 내역이 없습니다</div>'}
+            </div>
+          </div>`;
+      }
+
       container.innerHTML = `
         <div class="page">
           <div class="card-head">
-            <div><div class="section-title">수업 시간표</div><div class="section-sub">${branch} · 현재 운영 중인 프로그램</div></div>
-            ${addBtn}
+            <div><div class="section-title">상품 관리</div><div class="section-sub">${branch} · GX · 레슨 · 상품 / 결제 등록</div></div>
+            <div style="display:flex;gap:8px">${payBtn}${addBtn}</div>
           </div>
-          <div class="class-grid">
-            ${classes.map(c => `
-              <div class="class-card">
-                <div class="thumb" style="background:linear-gradient(135deg,#E0382B22,#1a141022)">
-                  <div class="corner"><span class="badge red">${c.days || '매일'}</span></div>
-                </div>
-                <div class="meta">
-                  <div class="title">${c.class_name}</div>
-                  <div class="row"><i data-lucide="clock" style="width:13px;height:13px"></i><span>${c.start_time} ~ ${c.end_time}</span></div>
-                  <div class="row"><i data-lucide="user" style="width:13px;height:13px"></i><span>${c.instructor_name || '강사 미배정'}</span></div>
-                  <div class="row"><i data-lucide="users" style="width:13px;height:13px"></i><span>정원 ${c.capacity}명</span></div>
-                </div>
-              </div>`).join('') || '<div class="empty" style="grid-column:1/-1">등록된 수업이 없습니다</div>'}
-          </div>
+          ${catSection('gx')}
+          ${catSection('lesson')}
+          ${catSection('goods')}
+          ${salesHtml}
         </div>`;
       if (window.lucide) lucide.createIcons();
     } catch (err) {
@@ -1084,29 +1220,185 @@
     }
   }
 
-  window.modalNewClass = function () {
+  window.deleteProduct = async function (pid) {
+    if (!confirm('이 상품을 삭제(비활성)하시겠습니까?')) return;
+    const resp = await api(`/api/products/${pid}`, { method: 'DELETE' });
+    if (resp?.ok) { showToast('삭제되었습니다'); renderClasses(document.getElementById('page-content')); }
+    else showToast('삭제 실패', 'err');
+  };
+
+  // ── 상품 추가: 1단계 카테고리 선택 → 2단계 상세 입력 ─────────
+  window.modalNewProduct = function () {
     createModal({
-      title: '수업 추가',
+      title: '상품 추가 — 분류 선택',
+      fields: [
+        { id:'category', label:'상품 분류', type:'radio', options:[
+          { value:'gx',     label:'GX 프로그램' },
+          { value:'lesson', label:'레슨 (PT·골프)' },
+          { value:'goods',  label:'상품 (카페 등)' },
+        ]},
+      ],
+      submitLabel: '다음',
+      onSubmit: async (data) => {
+        setTimeout(() => openProductForm(data.category), 100);
+      }
+    });
+  };
+
+  async function openProductForm(category) {
+    if (category === 'gx') {
+      // 강사 목록 불러와서 select 옵션 구성
+      let instructors = [];
+      try {
+        const r = await api(`/api/operations/instructors?branch=${encodeURIComponent(user.branch || '')}`);
+        if (r) instructors = await r.json();
+      } catch (e) {}
+      const instOpts = instructors.map(i => i.name);
+      createModal({
+        title: 'GX 프로그램 추가',
+        size: 'lg',
+        fields: [
+          { id:'name',  label:'프로그램 이름', type:'text', required:true, placeholder:'예: 줌바댄스 / 필라테스' },
+          { id:'instructor_name', label:'담당 강사', type: instOpts.length ? 'select' : 'text',
+            options: instOpts.length ? ['', ...instOpts] : undefined,
+            placeholder:'강사 이름', hint: instOpts.length ? '' : '강사 탭에서 강사를 먼저 등록하면 선택할 수 있습니다' },
+          { id:'price', label:'금액 (원)', type:'number', default:'0', min:0 },
+          { id:'days',  label:'운영 요일', type:'text', placeholder:'예: 월수금 / 화목 / 매일', row:'dt' },
+          { id:'capacity', label:'정원 (명)', type:'number', default:'20', min:1, row:'dt' },
+          { id:'start_time', label:'시작 시간', type:'time', default:'10:00', row:'tm' },
+          { id:'end_time',   label:'종료 시간', type:'time', default:'11:00', row:'tm' },
+        ],
+        submitLabel: 'GX 등록',
+        onSubmit: async (data) => submitProduct({ ...data, category:'gx',
+          price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20 }),
+      });
+    } else if (category === 'lesson') {
+      createModal({
+        title: '레슨 프로그램 추가',
+        size: 'lg',
+        fields: [
+          { id:'lesson_type', label:'레슨 종류', type:'radio', options:[
+            { value:'PT', label:'PT' }, { value:'골프레슨', label:'골프레슨' },
+          ]},
+          { id:'name',     label:'상품명', type:'text', required:true, placeholder:'예: PT 10회권 / 골프 주2회 레슨' },
+          { id:'sessions', label:'횟수 (회)', type:'number', default:'10', min:1, row:'ps' },
+          { id:'price',    label:'금액 (원)', type:'number', default:'0',  min:0, row:'ps' },
+        ],
+        submitLabel: '레슨 등록',
+        onSubmit: async (data) => submitProduct({ ...data, category:'lesson',
+          price: parseInt(data.price)||0, sessions: parseInt(data.sessions)||0 }),
+      });
+    } else {
+      createModal({
+        title: '상품 추가',
+        fields: [
+          { id:'name',  label:'상품명',   type:'text', required:true, placeholder:'예: 아메리카노 / 운동타올' },
+          { id:'price', label:'가격 (원)', type:'number', default:'0', min:0 },
+        ],
+        submitLabel: '상품 등록',
+        onSubmit: async (data) => submitProduct({ ...data, category:'goods',
+          price: parseInt(data.price)||0 }),
+      });
+    }
+  }
+
+  async function submitProduct(data) {
+    const resp = await api('/api/products', {
+      method: 'POST',
+      body: JSON.stringify({ ...data, branch: user.branch || '' })
+    });
+    if (!resp?.ok) {
+      const d = await resp?.json().catch(() => ({}));
+      throw new Error(d?.detail || '등록 실패');
+    }
+    showToast('✅ 등록되었습니다');
+    renderClasses(document.getElementById('page-content'));
+  }
+
+  // ── 결제 등록 (CRM) ───────────────────────────────────────────
+  window.modalNewSale = async function () {
+    const branch = user.branch || '';
+    let products = [], members = [];
+    try {
+      const [pR, mR] = await Promise.all([
+        api(`/api/products?branch=${encodeURIComponent(branch)}`),
+        api(`/api/members?branch=${encodeURIComponent(branch)}`),
+      ]);
+      if (pR) products = await pR.json();
+      if (mR) members  = await mR.json();
+    } catch (e) {}
+
+    const prodOpts = products.map(p =>
+      `${PROD_CAT[p.category]?.label || ''} | ${p.name} (${(p.price||0).toLocaleString()}원)`);
+    const membOpts = members.map(m => `${m.name} (${m.phone || '번호없음'})`);
+
+    createModal({
+      title: '💳 결제 등록',
       size: 'lg',
       fields: [
-        { id:'class_name',      label:'수업 이름',  type:'text', required:true, placeholder:'예: 줌바댄스 / 필라테스' },
-        { id:'instructor_name', label:'담당 강사',  type:'text', placeholder:'강사 이름' },
-        { id:'days',       label:'운영 요일',   type:'text', placeholder:'예: 월수금 / 화목 / 매일', row:'dt' },
-        { id:'capacity',   label:'정원 (명)',   type:'number', default:'20', min:1, row:'dt' },
-        { id:'start_time', label:'시작 시간',   type:'time', default:'10:00', row:'tm' },
-        { id:'end_time',   label:'종료 시간',   type:'time', default:'11:00', row:'tm' },
+        { id:'member',  label:'회원', type: membOpts.length ? 'select' : 'text',
+          options: membOpts.length ? ['직접 입력', ...membOpts] : undefined,
+          placeholder:'회원 이름', hint:'목록에 없으면 직접 입력을 선택하세요' },
+        { id:'member_direct', label:'회원 이름 (직접 입력 시)', type:'text', placeholder:'비회원/직접 입력' },
+        { id:'product', label:'상품', type: prodOpts.length ? 'select' : 'text',
+          options: prodOpts.length ? prodOpts : undefined, required:true,
+          placeholder:'상품명' },
+        { id:'amount',  label:'결제 금액 (원)', type:'number', default:'0', min:0, required:true,
+          hint:'상품 기본가와 다르면 수정하세요 (할인 등)' },
+        { id:'pay_method', label:'결제 수단', type:'radio', options:[
+          { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' }, { value:'계좌이체', label:'🏦 계좌이체' },
+        ]},
+        { id:'is_mgmt_fee', label:'관리비 청구 대상', type:'radio', options:[
+          { value:'0', label:'아니오' }, { value:'1', label:'예 (아파트 관리비 청구서 반영)' },
+        ]},
       ],
-      submitLabel: '수업 등록',
+      submitLabel: '결제 저장',
       onSubmit: async (data) => {
-        const resp = await api('/api/classes', {
+        // 회원 매칭
+        let memberId = 0, memberName = data.member_direct || '';
+        if (data.member && data.member !== '직접 입력') {
+          const idx = membOpts.indexOf(data.member);
+          if (idx >= 0) { memberId = members[idx].id; memberName = members[idx].name; }
+        }
+        // 상품 매칭
+        let productId = 0, productName = data.product, category = '';
+        const pIdx = prodOpts.indexOf(data.product);
+        if (pIdx >= 0) {
+          productId   = products[pIdx].id;
+          productName = products[pIdx].name;
+          category    = products[pIdx].category;
+        }
+        const amount = parseInt(data.amount) || 0;
+        if (amount <= 0) throw new Error('결제 금액을 입력하세요');
+
+        const resp = await api('/api/sales', {
           method: 'POST',
-          body: JSON.stringify({ ...data, branch: user.branch, capacity: parseInt(data.capacity)||20 })
+          body: JSON.stringify({
+            branch, member_id: memberId, member_name: memberName,
+            product_id: productId, product_name: productName, category,
+            amount, pay_method: data.pay_method, is_mgmt_fee: parseInt(data.is_mgmt_fee) || 0,
+          })
         });
-        if (!resp?.ok) throw new Error('등록 실패');
-        showToast('수업이 등록되었습니다');
+        if (!resp?.ok) {
+          const d = await resp?.json().catch(() => ({}));
+          throw new Error(d?.detail || '저장 실패');
+        }
+        showToast('✅ 결제가 등록되었습니다');
         renderClasses(document.getElementById('page-content'));
       }
     });
+
+    // 상품 선택 시 금액 자동 입력
+    setTimeout(() => {
+      const sel = document.getElementById('modal-product');
+      if (sel && sel.tagName === 'SELECT') {
+        sel.addEventListener('change', () => {
+          const idx = prodOpts.indexOf(sel.value);
+          const amtEl = document.getElementById('modal-amount');
+          if (idx >= 0 && amtEl) amtEl.value = products[idx].price || 0;
+        });
+      }
+    }, 200);
   };
 
   // ── Instructors ───────────────────────────────────────────────

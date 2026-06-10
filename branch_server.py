@@ -1079,6 +1079,87 @@ async def api_member_memberships_create(request: Request, member_id: int, body: 
     return {"id": mid}
 
 
+# ── Products & Sales API (CRM) ─────────────────────────────────────────────────
+from domains.branch_app.db import (
+    get_products, upsert_product, deactivate_product, get_sales, create_sale,
+)
+
+
+@app.get("/api/products")
+async def api_products_get(request: Request, branch: str = "", category: str = ""):
+    user = require_auth(request)
+    return get_products(_scope_branch(user, branch), category)
+
+
+class ProductBody(BaseModel):
+    id:              int = 0
+    branch:          str = ""
+    category:        str            # 'gx' | 'lesson' | 'goods'
+    name:            str
+    price:           int = 0
+    instructor_name: str = ""
+    days:            str = ""
+    start_time:      str = ""
+    end_time:        str = ""
+    capacity:        int = 0
+    lesson_type:     str = ""
+    sessions:        int = 0
+
+
+@app.post("/api/products")
+async def api_products_create(request: Request, body: ProductBody):
+    user = require_staff(request)
+    if body.category not in ("gx", "lesson", "goods"):
+        raise HTTPException(status_code=400, detail="category는 gx/lesson/goods 중 하나여야 합니다")
+    data = body.dict()
+    data["branch"] = _scope_branch(user, body.branch) or user.get("branch", "")
+    if not data["branch"]:
+        raise HTTPException(status_code=400, detail="지점 정보가 없습니다")
+    rid = upsert_product(data)
+    return {"id": rid}
+
+
+@app.delete("/api/products/{product_id}")
+async def api_products_delete(request: Request, product_id: int):
+    require_staff(request)
+    deactivate_product(product_id)
+    return {"ok": True}
+
+
+@app.get("/api/sales")
+async def api_sales_get(request: Request, branch: str = "",
+                        year: int = None, month: int = None):
+    user = require_staff(request)
+    return get_sales(_scope_branch(user, branch), year, month)
+
+
+class SaleBody(BaseModel):
+    branch:       str = ""
+    member_id:    int = 0
+    member_name:  str = ""
+    product_id:   int = 0
+    product_name: str
+    category:     str = ""
+    amount:       int = 0
+    pay_method:   str = "카드"
+    is_mgmt_fee:  int = 0
+    sale_date:    str = ""
+
+
+@app.post("/api/sales")
+async def api_sales_create(request: Request, body: SaleBody):
+    user = require_staff(request)
+    data = body.dict()
+    data["branch"]  = _scope_branch(user, body.branch) or user.get("branch", "")
+    data["sold_by"] = user.get("name", "")
+    if not data["branch"]:
+        raise HTTPException(status_code=400, detail="지점 정보가 없습니다")
+    if data["amount"] <= 0:
+        raise HTTPException(status_code=400, detail="결제 금액을 입력하세요")
+    rid = create_sale(data)
+    return {"id": rid}
+
+
 # ── Classes API ────────────────────────────────────────────────────────────────
 @app.get("/api/classes")
 async def api_classes_get(request: Request, branch: str = ""):

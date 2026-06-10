@@ -150,6 +150,41 @@ def init_branch_tables():
         created_at      TEXT DEFAULT (datetime('now','localtime'))
     );
 
+    -- 통합 상품 (GX프로그램 / 레슨 / 일반상품)
+    CREATE TABLE IF NOT EXISTS products (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        branch          TEXT NOT NULL,
+        category        TEXT NOT NULL,          -- 'gx' | 'lesson' | 'goods'
+        name            TEXT NOT NULL,
+        price           INTEGER DEFAULT 0,
+        instructor_name TEXT DEFAULT '',        -- gx
+        days            TEXT DEFAULT '',        -- gx
+        start_time      TEXT DEFAULT '',        -- gx
+        end_time        TEXT DEFAULT '',        -- gx
+        capacity        INTEGER DEFAULT 0,      -- gx
+        lesson_type     TEXT DEFAULT '',        -- lesson: 'PT' | '골프레슨'
+        sessions        INTEGER DEFAULT 0,      -- lesson: 횟수
+        is_active       INTEGER DEFAULT 1,
+        created_at      TEXT DEFAULT (datetime('now','localtime'))
+    );
+
+    -- 결제 기록 (CRM)
+    CREATE TABLE IF NOT EXISTS sales (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        branch        TEXT NOT NULL,
+        member_id     INTEGER DEFAULT 0,
+        member_name   TEXT DEFAULT '',
+        product_id    INTEGER DEFAULT 0,
+        product_name  TEXT NOT NULL,
+        category      TEXT DEFAULT '',          -- 'gx' | 'lesson' | 'goods'
+        amount        INTEGER DEFAULT 0,
+        pay_method    TEXT DEFAULT '카드',       -- '카드' | '현금' | '계좌이체'
+        is_mgmt_fee   INTEGER DEFAULT 0,        -- 관리비 청구 대상 여부
+        sold_by       TEXT DEFAULT '',
+        sale_date     TEXT DEFAULT (date('now','localtime')),
+        created_at    TEXT DEFAULT (datetime('now','localtime'))
+    );
+
     CREATE TABLE IF NOT EXISTS class_reservations (
         id               INTEGER PRIMARY KEY AUTOINCREMENT,
         schedule_id      INTEGER NOT NULL,
@@ -642,6 +677,90 @@ def upsert_class_schedule(data: dict) -> int:
               data.get("capacity",20)))
         rid = cur.lastrowid
     conn.commit()
+    conn.close()
+    return rid
+
+
+# ═══════════════════════════════════════════════════════════════
+#  상품 (GX / 레슨 / 일반상품) + 결제 기록
+# ═══════════════════════════════════════════════════════════════
+def get_products(branch: str, category: str = "", active_only: bool = True) -> list[dict]:
+    conn = get_conn()
+    q    = "SELECT * FROM products WHERE branch=?"
+    args = [branch]
+    if category:
+        q += " AND category=?"
+        args.append(category)
+    if active_only:
+        q += " AND is_active=1"
+    q += " ORDER BY category, name"
+    res = _rows(conn.execute(q, args))
+    conn.close()
+    return res
+
+
+def upsert_product(data: dict) -> int:
+    conn = get_conn()
+    if data.get("id"):
+        conn.execute("""
+            UPDATE products
+            SET name=?, price=?, instructor_name=?, days=?, start_time=?, end_time=?,
+                capacity=?, lesson_type=?, sessions=?, is_active=?
+            WHERE id=?
+        """, (data["name"], data.get("price", 0), data.get("instructor_name", ""),
+              data.get("days", ""), data.get("start_time", ""), data.get("end_time", ""),
+              data.get("capacity", 0), data.get("lesson_type", ""), data.get("sessions", 0),
+              data.get("is_active", 1), data["id"]))
+        rid = data["id"]
+    else:
+        cur = conn.execute("""
+            INSERT INTO products (branch, category, name, price, instructor_name, days,
+                                  start_time, end_time, capacity, lesson_type, sessions)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+        """, (data["branch"], data["category"], data["name"], data.get("price", 0),
+              data.get("instructor_name", ""), data.get("days", ""),
+              data.get("start_time", ""), data.get("end_time", ""),
+              data.get("capacity", 0), data.get("lesson_type", ""), data.get("sessions", 0)))
+        rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def deactivate_product(product_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE products SET is_active=0 WHERE id=?", (product_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_sales(branch: str, year: int = None, month: int = None, limit: int = 100) -> list[dict]:
+    conn = get_conn()
+    q    = "SELECT * FROM sales WHERE branch=?"
+    args = [branch]
+    if year and month:
+        q += " AND sale_date LIKE ?"
+        args.append(f"{year}-{month:02d}%")
+    q += " ORDER BY created_at DESC LIMIT ?"
+    args.append(limit)
+    res = _rows(conn.execute(q, args))
+    conn.close()
+    return res
+
+
+def create_sale(data: dict) -> int:
+    conn = get_conn()
+    cur  = conn.execute("""
+        INSERT INTO sales (branch, member_id, member_name, product_id, product_name,
+                           category, amount, pay_method, is_mgmt_fee, sold_by, sale_date)
+        VALUES (?,?,?,?,?,?,?,?,?,?,COALESCE(?, date('now','localtime')))
+    """, (data["branch"], data.get("member_id", 0), data.get("member_name", ""),
+          data.get("product_id", 0), data["product_name"], data.get("category", ""),
+          data.get("amount", 0), data.get("pay_method", "카드"),
+          data.get("is_mgmt_fee", 0), data.get("sold_by", ""),
+          data.get("sale_date") or None))
+    conn.commit()
+    rid = cur.lastrowid
     conn.close()
     return rid
 
