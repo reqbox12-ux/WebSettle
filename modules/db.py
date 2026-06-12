@@ -6,7 +6,9 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 from sqlalchemy import create_engine, text
 
-DB_PATH = Path(__file__).parent.parent / "data" / "settlement.db"
+# SETTLEMENT_DB 환경변수로 DB 경로 오버라이드 가능 (WEBAPP2 등 외부 앱용)
+_ENV_DB = os.getenv("SETTLEMENT_DB")
+DB_PATH = Path(_ENV_DB) if _ENV_DB else Path(__file__).parent.parent / "data" / "settlement.db"
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 # PostgreSQL 또는 SQLite 결정
