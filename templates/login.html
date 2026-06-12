@@ -272,6 +272,7 @@
         localStorage.setItem('raon_role', data.role);
         localStorage.setItem('raon_name', data.name);
         localStorage.setItem('raon_branch', data.branch || '');
+        localStorage.setItem('raon_admin', data.admin ? '1' : '');
 
         // 첫 로그인 시 비밀번호 변경 강제
         if (data.must_change_pw) {

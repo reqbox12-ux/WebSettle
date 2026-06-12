@@ -441,6 +441,17 @@ async def api_inquiry(body: InquiryBody):
     return {"ok": True, "msg": "접수되었습니다. 관리자 확인 후 연락드립니다."}
 
 
+@app.get("/api/branches")
+async def api_branches(request: Request):
+    """활성 지점 목록 — 관리자 지점 선택기용"""
+    require_auth(request)
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT name FROM branches WHERE is_active=1 ORDER BY name").fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
 @app.post("/api/auth/logout")
 async def api_logout():
     response = JSONResponse({"ok": True})

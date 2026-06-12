@@ -10,15 +10,21 @@
     return localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token');
   }
   function getUser() {
+    const isAdmin = localStorage.getItem('raon_admin') === '1';
+    // 관리자는 선택한 지점으로 동작 (전 지점 접근 가능)
+    const branch = isAdmin
+      ? (localStorage.getItem('raon_admin_branch') || '')
+      : (localStorage.getItem('raon_branch') || '');
     return {
-      role:   localStorage.getItem('raon_role')   || 'staff',
-      name:   localStorage.getItem('raon_name')   || '',
-      branch: localStorage.getItem('raon_branch') || '',
+      role:   localStorage.getItem('raon_role') || 'staff',
+      name:   localStorage.getItem('raon_name') || '',
+      admin:  isAdmin,
+      branch: branch,
     };
   }
   function logout() {
     fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
-      ['raon_token','raon_role','raon_name','raon_branch'].forEach(k => {
+      ['raon_token','raon_role','raon_name','raon_branch','raon_admin','raon_admin_branch'].forEach(k => {
         localStorage.removeItem(k);
         sessionStorage.removeItem(k);
       });
@@ -274,6 +280,12 @@
           </div>
           <div class="header-spacer"></div>
           <div class="header-action">
+            ${user.admin ? `
+              <select id="admin-branch-sel" onchange="adminBranchChange(this.value)"
+                style="padding:8px 12px;border:1.5px solid rgba(128,128,128,.35);border-radius:9px;
+                font-size:13px;font-weight:700;background:transparent;color:inherit;max-width:180px">
+                <option value="">🏢 지점 선택…</option>
+              </select>` : ''}
             <button class="icon-btn" onclick="toggleTheme()" title="다크모드">
               <i data-lucide="moon"></i>
             </button>
@@ -290,8 +302,37 @@
     `;
 
     if (window.lucide) lucide.createIcons();
+    if (user.admin) loadAdminBranches();
     renderPage(currentPage);
   }
+
+  // ── 관리자 지점 선택기 ────────────────────────────────────────
+  let _adminBranches = null;
+
+  async function loadAdminBranches() {
+    const sel = document.getElementById('admin-branch-sel');
+    if (!sel) return;
+    if (_adminBranches === null) {
+      try {
+        const r = await api('/api/branches');
+        _adminBranches = r && r.ok ? await r.json() : [];
+      } catch (e) { _adminBranches = []; }
+    }
+    sel.innerHTML = '<option value="">🏢 지점 선택…</option>' +
+      _adminBranches.map(b =>
+        `<option value="${b}" ${b === user.branch ? 'selected' : ''}>${b}</option>`).join('');
+    // 미선택 상태면 첫 지점 자동 선택
+    if (!user.branch && _adminBranches.length) {
+      adminBranchChange(_adminBranches[0]);
+    }
+  }
+
+  window.adminBranchChange = function (branch) {
+    if (!branch) return;
+    localStorage.setItem('raon_admin_branch', branch);
+    user.branch = branch;
+    renderShell();
+  };
 
   // ── Page Renderers ────────────────────────────────────────────
   async function renderPage(page) {
